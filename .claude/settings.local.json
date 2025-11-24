@@ -1,0 +1,26 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(NUL)",
+      "Bash(git -C \"d:\\site-fullStack\\DevFlow\" status --short)",
+      "Bash(git -C \"d:\\site-fullStack\\DevFlow\" status)",
+      "Bash(test:*)",
+      "Bash(git -C \"d:\\site-fullStack\\DevFlow\" log --oneline -10)",
+      "Bash(git -C \"d:\\site-fullStack\\DevFlow\" diff HEAD --name-only)",
+      "Bash(git -C \"d:\\site-fullStack\\DevFlow\" diff --name-only --cached)",
+      "Bash(git -C \"d:\\site-fullStack\\DevFlow\" diff --name-only)",
+      "Bash(git -C \"d:\\site-fullStack\\DevFlow\" status --porcelain)",
+      "Bash(git -C \"d:\\site-fullStack\\DevFlow\" diff src/app/app.routes.ts)",
+      "Bash(git -C \"d:\\site-fullStack\\DevFlow\" diff src/app/app.ts)",
+      "Bash(dir:*)",
+      "Bash(grep:*)",
+      "Bash(npm start)",
+      "Bash(netstat:*)",
+      "Bash(findstr:*)",
+      "Bash(taskkill:*)",
+      "Bash(ng generate:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

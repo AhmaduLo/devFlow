@@ -1,0 +1,44 @@
+<div class="guide-viewer-container" *ngIf="guide">
+  <!-- Header -->
+  <header class="guide-header">
+    <button class="back-btn" (click)="goBack()">
+      <span class="material-icons">arrow_back</span>
+      Retour
+    </button>
+
+    <div class="guide-info">
+      <button class="guide-badge"
+              [style.background-color]="guide.color"
+              (click)="goHome()"
+              title="Retour à la page d'accueil">
+        <span class="material-icons">{{ guide.icon }}</span>
+      </button>
+      <div class="guide-meta-info">
+        <h1 class="guide-main-title">{{ guide.title }}</h1>
+        <div class="guide-details">
+          <span class="category-badge">{{ guide.category }}</span>
+          <span class="date-badge">
+            <span class="material-icons">update</span>
+            {{ guide.lastUpdated | date:'short' }}
+          </span>
+        </div>
+        <div class="guide-tags-header">
+          <span class="tag-chip" *ngFor="let tag of guide.tags">{{ tag }}</span>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- Content -->
+  <article class="guide-content">
+    <div class="markdown-body" [innerHTML]="renderedContent"></div>
+  </article>
+
+  <!-- Navigation Footer -->
+  <footer class="guide-footer">
+    <button class="footer-btn" (click)="goBack()">
+      <span class="material-icons">dashboard</span>
+      Retour au tableau de bord
+    </button>
+  </footer>
+</div>

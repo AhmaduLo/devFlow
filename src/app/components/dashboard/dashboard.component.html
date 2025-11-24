@@ -1,0 +1,72 @@
+<div class="dashboard-container">
+  <!-- Mobile Menu Button -->
+  @if (!isSidebarOpen) {
+    <button class="mobile-menu-btn" (click)="toggleSidebar()">
+      <span class="material-icons">menu</span>
+    </button>
+  }
+
+  <!-- Overlay for mobile -->
+  <div class="sidebar-overlay" [class.active]="isSidebarOpen" (click)="toggleSidebar()"></div>
+
+  <!-- Sidebar -->
+  <aside class="sidebar" [class.closed]="!isSidebarOpen">
+    <div class="sidebar-header">
+      <h2 class="sidebar-title" routerLink="/">DevFlow</h2>
+      <button class="toggle-btn" (click)="toggleSidebar()">
+        <span class="material-icons">{{ isSidebarOpen ? 'close' : 'chevron_right' }}</span>
+      </button>
+    </div>
+
+    <nav class="sidebar-nav" *ngIf="isSidebarOpen">
+      <div
+        *ngFor="let category of categories"
+        class="nav-item"
+        [class.active]="selectedCategory === category"
+        (click)="selectCategory(category)"
+        [style.--category-color]="getCategoryColor(category)"
+      >
+        <span class="material-icons nav-icon">{{ getCategoryIcon(category) }}</span>
+        <span class="nav-label">{{ category }}</span>
+      </div>
+    </nav>
+  </aside>
+
+  <!-- Main Content -->
+  <main class="main-content">
+    <header class="content-header">
+      <h1 class="section-title">{{ selectedCategory || 'DevFlow' }}</h1>
+      <p class="section-subtitle">Guide de développement full-stack</p>
+    </header>
+
+    <!-- Guides Grid -->
+    <div class="guides-grid" *ngIf="guides$ | async as guides">
+      <div
+        *ngFor="let guide of getGuidesByCategory(guides)"
+        class="guide-card"
+        [routerLink]="['/guide', guide.id]"
+      >
+        <div class="guide-icon" [style.background-color]="guide.color">
+          <span class="material-icons">{{ guide.icon }}</span>
+        </div>
+        <div class="guide-content">
+          <h3 class="guide-title">{{ guide.title }}</h3>
+          <div class="guide-tags">
+            <span class="tag" *ngFor="let tag of guide.tags">{{ tag }}</span>
+          </div>
+          <p class="guide-meta">Mis à jour le {{ guide.lastUpdated | date:'short' }}</p>
+        </div>
+        <div class="guide-arrow">
+          <span class="material-icons">arrow_forward</span>
+        </div>
+      </div>
+
+      <!-- Empty State -->
+      <div class="empty-state" *ngIf="getGuidesByCategory(guides).length === 0">
+        <span class="material-icons empty-icon">article</span>
+        <h3>Aucun guide disponible</h3>
+        <p>Les guides pour cette catégorie seront ajoutés prochainement.</p>
+      </div>
+    </div>
+  </main>
+</div>
