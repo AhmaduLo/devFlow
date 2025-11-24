@@ -471,17 +471,427 @@ User user = userRepository.findById(id)
         lastUpdated: new Date(),
         content: `# Diagrammes UML
 
-## 📌 Définition
+## 📌 Qu'est-ce que l'UML ?
 
-Les diagrammes UML (Unified Modeling Language) permettent de modéliser visuellement votre application avant de coder.
+**UML (Unified Modeling Language)** est un langage de modélisation graphique standardisé utilisé pour :
+- Visualiser l'architecture d'une application
+- Concevoir le système avant le développement
+- Communiquer avec l'équipe et les clients
+- Documenter les fonctionnalités et comportements
 
-*Contenu détaillé à venir...*
+---
 
-### Types principaux
-- Diagramme de cas d'utilisation
-- Diagramme de classes
-- Diagramme de séquence
-- Diagramme d'activité
+## 🎯 Types de Diagrammes UML
+
+### 1. Diagramme de Cas d'Utilisation (Use Case)
+
+**Objectif** : Identifier les acteurs et leurs interactions avec le système.
+
+**Éléments clés** :
+- **Acteur** : Utilisateur ou système externe
+- **Cas d'utilisation** : Fonctionnalité du système
+- **Relations** : Include, extend, généralisation
+
+**Exemple : Système de gestion de bibliothèque**
+
+\`\`\`
+┌─────────────────────────────────────────────────┐
+│                                                 │
+│  [Étudiant]                                     │
+│     │                                           │
+│     ├──> (Emprunter un livre)                  │
+│     │         │                                 │
+│     │         └─<<include>>─> (S'authentifier) │
+│     │                                           │
+│     ├──> (Retourner un livre)                  │
+│     │                                           │
+│     └──> (Rechercher un livre)                 │
+│                                                 │
+│  [Bibliothécaire]                              │
+│     │                                           │
+│     ├──> (Ajouter un livre)                    │
+│     │         │                                 │
+│     │         └─<<extend>>─> (Scanner code-barres)
+│     │                                           │
+│     └──> (Gérer les retards)                   │
+│                                                 │
+└─────────────────────────────────────────────────┘
+\`\`\`
+
+**Relations** :
+- **<<include>>** : Fonctionnalité obligatoire (ex: authentification)
+- **<<extend>>** : Fonctionnalité optionnelle (ex: scanner)
+
+---
+
+### 2. Diagramme de Classes
+
+**Objectif** : Modéliser la structure statique du système (classes, attributs, méthodes, relations).
+
+**Éléments clés** :
+- **Classe** : Nom, attributs, méthodes
+- **Relations** : Association, agrégation, composition, héritage
+
+**Exemple : Système de commerce en ligne**
+
+\`\`\`java
+┌─────────────────────────────────┐
+│          User                   │
+├─────────────────────────────────┤
+│ - id: Long                      │
+│ - email: String                 │
+│ - password: String              │
+│ - name: String                  │
+├─────────────────────────────────┤
+│ + register(): void              │
+│ + login(): boolean              │
+│ + updateProfile(): void         │
+└─────────────────────────────────┘
+           △
+           │ (héritage)
+           │
+    ┌──────┴──────┐
+    │             │
+┌───────────┐ ┌───────────┐
+│  Client   │ │   Admin   │
+├───────────┤ ├───────────┤
+│ - cart    │ │ - role    │
+├───────────┤ ├───────────┤
+│ + order() │ │ + manage()│
+└───────────┘ └───────────┘
+     │
+     │ (composition) 1──*
+     │
+┌─────────────────────────────────┐
+│          Order                  │
+├─────────────────────────────────┤
+│ - id: Long                      │
+│ - date: Date                    │
+│ - total: Double                 │
+│ - status: OrderStatus           │
+├─────────────────────────────────┤
+│ + calculate(): Double           │
+│ + cancel(): void                │
+└─────────────────────────────────┘
+     │
+     │ (composition) 1──*
+     │
+┌─────────────────────────────────┐
+│        OrderItem                │
+├─────────────────────────────────┤
+│ - quantity: int                 │
+│ - price: Double                 │
+├─────────────────────────────────┤
+│ + getSubtotal(): Double         │
+└─────────────────────────────────┘
+     │
+     │ (association) *──1
+     │
+┌─────────────────────────────────┐
+│         Product                 │
+├─────────────────────────────────┤
+│ - id: Long                      │
+│ - name: String                  │
+│ - price: Double                 │
+│ - stock: int                    │
+├─────────────────────────────────┤
+│ + updateStock(): void           │
+│ + getDetails(): String          │
+└─────────────────────────────────┘
+\`\`\`
+
+**Types de relations** :
+- **Association (─)** : Lien simple entre classes
+- **Agrégation (◇─)** : "A un" - relation faible
+- **Composition (◆─)** : "Composé de" - relation forte
+- **Héritage (△─)** : "Est un" - spécialisation
+
+---
+
+### 3. Diagramme de Séquence
+
+**Objectif** : Montrer les interactions entre objets dans un scénario temporel.
+
+**Exemple : Processus de connexion**
+
+\`\`\`
+Client    →    Frontend    →    Backend    →   Database
+  │               │               │               │
+  │  Login()      │               │               │
+  ├──────────────>│               │               │
+  │               │  POST /login  │               │
+  │               ├──────────────>│               │
+  │               │               │ findUser()    │
+  │               │               ├──────────────>│
+  │               │               │               │
+  │               │               │  User data    │
+  │               │               │<──────────────┤
+  │               │               │               │
+  │               │               │ validatePwd() │
+  │               │               │───┐           │
+  │               │               │<──┘           │
+  │               │               │               │
+  │               │               │ generateJWT() │
+  │               │               │───┐           │
+  │               │               │<──┘           │
+  │               │               │               │
+  │               │  200 + token  │               │
+  │               │<──────────────┤               │
+  │               │               │               │
+  │  Success      │               │               │
+  │<──────────────┤               │               │
+  │               │               │               │
+\`\`\`
+
+**Éléments** :
+- **Lignes de vie** : Représentent les objets (verticales)
+- **Messages** : Flèches entre objets
+- **Activation** : Barres rectangulaires (exécution)
+
+---
+
+### 4. Diagramme d'Activité
+
+**Objectif** : Modéliser le flux de travail et les processus métier.
+
+**Exemple : Processus de commande en ligne**
+
+\`\`\`
+    (●) Début
+      │
+      ▼
+   [Parcourir catalogue]
+      │
+      ▼
+   ◇ Produit trouvé ?
+   ├─ Non ──> [Afficher message]─┐
+   │                              │
+   └─ Oui                         │
+      │                           │
+      ▼                           │
+   [Ajouter au panier]           │
+      │                           │
+      ▼                           │
+   ◇ Continuer shopping ?        │
+   ├─ Oui ───────────────────────┘
+   │
+   └─ Non
+      │
+      ▼
+   [Valider panier]
+      │
+      ▼
+   ◇ Stock disponible ?
+   ├─ Non ──> [Retirer produit]──┐
+   │                              │
+   └─ Oui                         │
+      │                           │
+      ▼                           │
+   [Choisir livraison]           │
+      │                           │
+      ▼                           │
+   [Saisir paiement]             │
+      │                           │
+      ▼                           │
+   ◇ Paiement réussi ?           │
+   ├─ Non ──> [Erreur paiement]──┤
+   │                              │
+   └─ Oui                         │
+      │                           │
+      ▼                           │
+   [Confirmer commande]          │
+      │                           │
+      ▼                           │
+   [Envoyer email]              │
+      │                           │
+      ▼                           │
+    (◉) Fin <────────────────────┘
+\`\`\`
+
+**Symboles** :
+- **(●)** : Nœud de début
+- **(◉)** : Nœud de fin
+- **[Action]** : Activité
+- **◇** : Condition/décision
+- **│** : Flux
+
+---
+
+### 5. Diagramme d'État
+
+**Objectif** : Modéliser les différents états d'un objet et leurs transitions.
+
+**Exemple : États d'une commande**
+
+\`\`\`
+    (●) Initial
+      │
+      │ créer()
+      ▼
+┌─────────────────┐
+│    PENDING      │
+│  (En attente)   │
+└─────────────────┘
+      │
+      │ confirm()
+      ▼
+┌─────────────────┐
+│   CONFIRMED     │
+│  (Confirmée)    │
+└─────────────────┘
+      │
+      │ pay()
+      ▼
+┌─────────────────┐
+│     PAID        │────┐
+│   (Payée)       │    │ ship()
+└─────────────────┘    │
+      │                │
+      │                ▼
+      │          ┌─────────────────┐
+      │          │    SHIPPED      │
+      │          │   (Expédiée)    │
+      │          └─────────────────┘
+      │                │
+      │                │ deliver()
+      │                ▼
+      │          ┌─────────────────┐
+      │          │   DELIVERED     │
+      │          │   (Livrée)      │
+      │          └─────────────────┘
+      │                │
+      │ cancel()       │ complete()
+      ▼                ▼
+┌─────────────────┐  (◉)
+│   CANCELLED     │
+│   (Annulée)     │
+└─────────────────┘
+      │
+      ▼
+    (◉) Final
+\`\`\`
+
+---
+
+## 🛠️ Outils de Modélisation UML
+
+### Outils recommandés
+
+**1. PlantUML**
+- Génère des diagrammes à partir de texte
+- Intégration avec VS Code, IntelliJ
+- Format : fichiers .puml
+
+\`\`\`plantuml
+@startuml
+actor User
+User -> System : Login
+System -> Database : Verify credentials
+Database -> System : User data
+System -> User : Success
+@enduml
+\`\`\`
+
+**2. Draw.io (diagrams.net)**
+- Gratuit et en ligne
+- Interface glisser-déposer
+- Export en PNG, SVG, PDF
+
+**3. Lucidchart**
+- Collaboration en temps réel
+- Templates UML prêts à l'emploi
+- Version gratuite limitée
+
+**4. StarUML**
+- Application desktop professionnelle
+- Support complet UML 2.0
+- Version gratuite avec limitations
+
+---
+
+## ✅ Bonnes Pratiques
+
+### 1. Commencer simple
+- Ne pas tout modéliser dès le début
+- Focus sur les éléments critiques
+- Itérer progressivement
+
+### 2. Nommer correctement
+- Classes : PascalCase (User, OrderItem)
+- Attributs/Méthodes : camelCase (firstName, calculateTotal)
+- Éviter les noms génériques
+
+### 3. Respecter les principes SOLID
+- **S**ingle Responsibility
+- **O**pen/Closed
+- **L**iskov Substitution
+- **I**nterface Segregation
+- **D**ependency Inversion
+
+### 4. Documentation
+- Ajouter des notes explicatives
+- Documenter les choix de conception
+- Maintenir les diagrammes à jour
+
+---
+
+## 🎯 Exemple Complet : Application de Blog
+
+### Diagramme de Classes
+
+\`\`\`java
+┌─────────────────────────────────┐
+│            User                 │
+├─────────────────────────────────┤
+│ - id: Long                      │
+│ - username: String              │
+│ - email: String                 │
+│ - role: UserRole                │
+├─────────────────────────────────┤
+│ + authenticate(): boolean       │
+│ + hasPermission(): boolean      │
+└─────────────────────────────────┘
+     │
+     │ 1──* (author)
+     │
+┌─────────────────────────────────┐
+│           Article               │
+├─────────────────────────────────┤
+│ - id: Long                      │
+│ - title: String                 │
+│ - content: String               │
+│ - publishDate: Date             │
+│ - status: ArticleStatus         │
+├─────────────────────────────────┤
+│ + publish(): void               │
+│ + update(): void                │
+│ + delete(): void                │
+└─────────────────────────────────┘
+     │
+     │ 1──*
+     │
+┌─────────────────────────────────┐
+│          Comment                │
+├─────────────────────────────────┤
+│ - id: Long                      │
+│ - content: String               │
+│ - createdAt: Date               │
+├─────────────────────────────────┤
+│ + create(): void                │
+│ + moderate(): void              │
+└─────────────────────────────────┘
+\`\`\`
+
+---
+
+## 📚 Ressources Complémentaires
+
+- [Spécification UML officielle](https://www.omg.org/spec/UML/)
+- [PlantUML Documentation](https://plantuml.com/)
+- Livre : "UML pour les développeurs" - Pascal Roques
+- Tutoriel : [Visual Paradigm UML Guide](https://www.visual-paradigm.com/guide/uml/)
+
+**💡 Conseil** : Utilisez UML comme outil de communication, pas comme documentation exhaustive. L'objectif est de clarifier, pas de compliquer !
 `
       },
 
