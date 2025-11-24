@@ -459,6 +459,1035 @@ User user = userRepository.findById(id)
 - [ ] Gestion correcte d'Optional
 `
       },
+      {
+        id: 'backend-services',
+        title: 'Les Services (Logique Métier)',
+        category: GuideCategory.BACKEND,
+        icon: 'business',
+        color: '#10b981',
+        order: 3,
+        tags: ['Service', 'Business Logic', 'Transaction', 'Spring'],
+        lastUpdated: new Date(),
+        content: `# Les Services (Logique Métier)
+
+## 📌 Définition
+
+Un **Service** contient la logique métier de votre application. C'est la couche intermédiaire entre les Controllers (API) et les Repositories (Data).
+
+### Rôle dans l'architecture
+- **Couche Business** : Logique métier et règles de gestion
+- **Transactions** : Gestion des transactions avec @Transactional
+- **Orchestration** : Coordonne plusieurs repositories
+- **Validation** : Vérifie les règles métier
+
+---
+
+## 🏗️ Structure d'un Service
+
+### Service de base
+
+\`\`\`java
+@Service
+public class UserService {
+
+    private final UserRepository userRepository;
+
+    // Injection par constructeur (recommandé)
+    @Autowired
+    public UserService(UserRepository userRepository) {
+        this.userRepository = userRepository;
+    }
+
+    public User createUser(UserDTO userDTO) {
+        // Logique métier ici
+        User user = new User();
+        user.setEmail(userDTO.getEmail());
+        user.setFirstName(userDTO.getFirstName());
+        user.setLastName(userDTO.getLastName());
+
+        return userRepository.save(user);
+    }
+
+    public User getUserById(Long id) {
+        return userRepository.findById(id)
+            .orElseThrow(() -> new UserNotFoundException("User not found with id: " + id));
+    }
+
+    public List<User> getAllUsers() {
+        return userRepository.findAll();
+    }
+
+    public User updateUser(Long id, UserDTO userDTO) {
+        User user = getUserById(id);
+        user.setFirstName(userDTO.getFirstName());
+        user.setLastName(userDTO.getLastName());
+        return userRepository.save(user);
+    }
+
+    public void deleteUser(Long id) {
+        if (!userRepository.existsById(id)) {
+            throw new UserNotFoundException("User not found with id: " + id);
+        }
+        userRepository.deleteById(id);
+    }
+}
+\`\`\`
+
+---
+
+## 💼 @Transactional
+
+### Gestion des transactions
+
+\`\`\`java
+@Service
+public class OrderService {
+
+    private final OrderRepository orderRepository;
+    private final ProductRepository productRepository;
+    private final EmailService emailService;
+
+    @Autowired
+    public OrderService(
+        OrderRepository orderRepository,
+        ProductRepository productRepository,
+        EmailService emailService
+    ) {
+        this.orderRepository = orderRepository;
+        this.productRepository = productRepository;
+        this.emailService = emailService;
+    }
+
+    @Transactional
+    public Order createOrder(OrderDTO orderDTO) {
+        // 1. Créer la commande
+        Order order = new Order();
+        order.setCustomerId(orderDTO.getCustomerId());
+        order.setStatus(OrderStatus.PENDING);
+
+        // 2. Ajouter les produits et mettre à jour le stock
+        for (OrderItemDTO itemDTO : orderDTO.getItems()) {
+            Product product = productRepository.findById(itemDTO.getProductId())
+                .orElseThrow(() -> new ProductNotFoundException(itemDTO.getProductId()));
+
+            // Vérifier le stock
+            if (product.getStock() < itemDTO.getQuantity()) {
+                throw new InsufficientStockException("Not enough stock for product: " + product.getName());
+            }
+
+            // Réduire le stock
+            product.setStock(product.getStock() - itemDTO.getQuantity());
+            productRepository.save(product);
+
+            // Ajouter l'item à la commande
+            OrderItem orderItem = new OrderItem();
+            orderItem.setProduct(product);
+            orderItem.setQuantity(itemDTO.getQuantity());
+            orderItem.setPrice(product.getPrice());
+            order.addItem(orderItem);
+        }
+
+        // 3. Sauvegarder la commande
+        Order savedOrder = orderRepository.save(order);
+
+        // 4. Envoyer email de confirmation
+        emailService.sendOrderConfirmation(savedOrder);
+
+        return savedOrder;
+    }
+
+    @Transactional(readOnly = true)
+    public Order getOrderById(Long id) {
+        return orderRepository.findById(id)
+            .orElseThrow(() -> new OrderNotFoundException("Order not found with id: " + id));
+    }
+
+    @Transactional
+    public void cancelOrder(Long orderId) {
+        Order order = getOrderById(orderId);
+
+        if (order.getStatus() == OrderStatus.SHIPPED) {
+            throw new IllegalStateException("Cannot cancel a shipped order");
+        }
+
+        // Remettre le stock
+        for (OrderItem item : order.getItems()) {
+            Product product = item.getProduct();
+            product.setStock(product.getStock() + item.getQuantity());
+            productRepository.save(product);
+        }
+
+        order.setStatus(OrderStatus.CANCELLED);
+        orderRepository.save(order);
+    }
+}
+\`\`\`
+
+**Paramètres de @Transactional** :
+- \`readOnly = true\` : Optimise pour la lecture seule
+- \`propagation\` : REQUIRED, REQUIRES_NEW, NESTED, etc.
+- \`isolation\` : Niveau d'isolation (READ_COMMITTED, SERIALIZABLE, etc.)
+- \`timeout\` : Timeout en secondes
+- \`rollbackFor\` : Exception qui déclenche un rollback
+
+---
+
+## 🎯 Service Layer Pattern
+
+### Séparation Interface / Implémentation
+
+\`\`\`java
+// Interface
+public interface UserService {
+    User createUser(UserDTO userDTO);
+    User getUserById(Long id);
+    List<User> getAllUsers();
+    User updateUser(Long id, UserDTO userDTO);
+    void deleteUser(Long id);
+}
+
+// Implémentation
+@Service
+public class UserServiceImpl implements UserService {
+
+    private final UserRepository userRepository;
+
+    @Autowired
+    public UserServiceImpl(UserRepository userRepository) {
+        this.userRepository = userRepository;
+    }
+
+    @Override
+    public User createUser(UserDTO userDTO) {
+        // Validation métier
+        if (userRepository.existsByEmail(userDTO.getEmail())) {
+            throw new EmailAlreadyExistsException("Email already in use: " + userDTO.getEmail());
+        }
+
+        User user = mapToEntity(userDTO);
+        return userRepository.save(user);
+    }
+
+    @Override
+    public User getUserById(Long id) {
+        return userRepository.findById(id)
+            .orElseThrow(() -> new UserNotFoundException("User not found with id: " + id));
+    }
+
+    // ... autres méthodes
+
+    private User mapToEntity(UserDTO dto) {
+        User user = new User();
+        user.setEmail(dto.getEmail());
+        user.setFirstName(dto.getFirstName());
+        user.setLastName(dto.getLastName());
+        return user;
+    }
+}
+\`\`\`
+
+---
+
+## 🔄 Mappage DTO ↔ Entity
+
+### Avec MapStruct (recommandé)
+
+\`\`\`java
+@Mapper(componentModel = "spring")
+public interface UserMapper {
+    UserDTO toDTO(User user);
+    User toEntity(UserDTO userDTO);
+    List<UserDTO> toDTOList(List<User> users);
+}
+
+@Service
+public class UserService {
+
+    private final UserRepository userRepository;
+    private final UserMapper userMapper;
+
+    @Autowired
+    public UserService(UserRepository userRepository, UserMapper userMapper) {
+        this.userRepository = userRepository;
+        this.userMapper = userMapper;
+    }
+
+    public UserDTO createUser(UserDTO userDTO) {
+        User user = userMapper.toEntity(userDTO);
+        User savedUser = userRepository.save(user);
+        return userMapper.toDTO(savedUser);
+    }
+}
+\`\`\`
+
+### Manuellement
+
+\`\`\`java
+@Service
+public class UserService {
+
+    public UserDTO createUser(UserDTO userDTO) {
+        User user = new User();
+        user.setEmail(userDTO.getEmail());
+        user.setFirstName(userDTO.getFirstName());
+        user.setLastName(userDTO.getLastName());
+
+        User savedUser = userRepository.save(user);
+
+        return mapToDTO(savedUser);
+    }
+
+    private UserDTO mapToDTO(User user) {
+        UserDTO dto = new UserDTO();
+        dto.setId(user.getId());
+        dto.setEmail(user.getEmail());
+        dto.setFirstName(user.getFirstName());
+        dto.setLastName(user.getLastName());
+        dto.setCreatedAt(user.getCreatedAt());
+        return dto;
+    }
+}
+\`\`\`
+
+---
+
+## ✅ Validation Métier
+
+\`\`\`java
+@Service
+public class OrderService {
+
+    @Transactional
+    public Order createOrder(OrderDTO orderDTO) {
+        // Validation 1: Client existe
+        User customer = userRepository.findById(orderDTO.getCustomerId())
+            .orElseThrow(() -> new CustomerNotFoundException("Customer not found"));
+
+        // Validation 2: Panier non vide
+        if (orderDTO.getItems().isEmpty()) {
+            throw new EmptyCartException("Cannot create order with empty cart");
+        }
+
+        // Validation 3: Montant minimum
+        double total = calculateTotal(orderDTO.getItems());
+        if (total < 10.0) {
+            throw new MinimumAmountException("Order minimum is €10.00");
+        }
+
+        // Validation 4: Stock disponible
+        validateStock(orderDTO.getItems());
+
+        // Créer la commande
+        Order order = new Order();
+        order.setCustomer(customer);
+        order.setTotal(total);
+        order.setStatus(OrderStatus.PENDING);
+
+        return orderRepository.save(order);
+    }
+
+    private void validateStock(List<OrderItemDTO> items) {
+        for (OrderItemDTO item : items) {
+            Product product = productRepository.findById(item.getProductId())
+                .orElseThrow(() -> new ProductNotFoundException(item.getProductId()));
+
+            if (product.getStock() < item.getQuantity()) {
+                throw new InsufficientStockException(
+                    String.format("Insufficient stock for product %s. Available: %d, Requested: %d",
+                        product.getName(), product.getStock(), item.getQuantity())
+                );
+            }
+        }
+    }
+
+    private double calculateTotal(List<OrderItemDTO> items) {
+        return items.stream()
+            .mapToDouble(item -> {
+                Product product = productRepository.findById(item.getProductId()).orElseThrow();
+                return product.getPrice() * item.getQuantity();
+            })
+            .sum();
+    }
+}
+\`\`\`
+
+---
+
+## 🎨 Exemples Complets
+
+### Service avec pagination
+
+\`\`\`java
+@Service
+public class ArticleService {
+
+    private final ArticleRepository articleRepository;
+
+    public Page<ArticleDTO> getPublishedArticles(int page, int size, String sortBy) {
+        Pageable pageable = PageRequest.of(page, size, Sort.by(sortBy).descending());
+        Page<Article> articles = articleRepository.findByStatus(ArticleStatus.PUBLISHED, pageable);
+        return articles.map(this::mapToDTO);
+    }
+
+    private ArticleDTO mapToDTO(Article article) {
+        ArticleDTO dto = new ArticleDTO();
+        dto.setId(article.getId());
+        dto.setTitle(article.getTitle());
+        dto.setContent(article.getContent());
+        dto.setAuthor(article.getAuthor().getUsername());
+        dto.setPublishedAt(article.getPublishedAt());
+        return dto;
+    }
+}
+\`\`\`
+
+### Service avec cache
+
+\`\`\`java
+@Service
+@CacheConfig(cacheNames = "users")
+public class UserService {
+
+    @Cacheable(key = "#id")
+    public UserDTO getUserById(Long id) {
+        User user = userRepository.findById(id)
+            .orElseThrow(() -> new UserNotFoundException(id));
+        return mapToDTO(user);
+    }
+
+    @CachePut(key = "#result.id")
+    public UserDTO updateUser(Long id, UserDTO userDTO) {
+        User user = userRepository.findById(id)
+            .orElseThrow(() -> new UserNotFoundException(id));
+
+        user.setFirstName(userDTO.getFirstName());
+        user.setLastName(userDTO.getLastName());
+
+        User updatedUser = userRepository.save(user);
+        return mapToDTO(updatedUser);
+    }
+
+    @CacheEvict(key = "#id")
+    public void deleteUser(Long id) {
+        userRepository.deleteById(id);
+    }
+}
+\`\`\`
+
+---
+
+## ⚠️ Erreurs Courantes
+
+### 1. Transaction trop large
+❌ **Mauvais** : Transaction qui inclut des appels externes
+\`\`\`java
+@Transactional
+public void processOrder(Order order) {
+    orderRepository.save(order);
+    emailService.sendEmail(order); // Appel externe dans transaction
+}
+\`\`\`
+
+✅ **Bon** : Séparer la transaction
+\`\`\`java
+@Transactional
+public Order saveOrder(Order order) {
+    return orderRepository.save(order);
+}
+
+public void processOrder(Order order) {
+    Order savedOrder = saveOrder(order);
+    emailService.sendEmail(savedOrder); // Après transaction
+}
+\`\`\`
+
+### 2. Oublier @Transactional pour les écritures multiples
+\`\`\`java
+@Transactional // Important !
+public void transferMoney(Long fromId, Long toId, double amount) {
+    Account from = accountRepository.findById(fromId).orElseThrow();
+    Account to = accountRepository.findById(toId).orElseThrow();
+
+    from.setBalance(from.getBalance() - amount);
+    to.setBalance(to.getBalance() + amount);
+
+    accountRepository.save(from);
+    accountRepository.save(to);
+}
+\`\`\`
+
+### 3. Logique métier dans le Controller
+❌ **Mauvais** : Logique dans le controller
+\`\`\`java
+@RestController
+public class UserController {
+    @PostMapping("/users")
+    public User create(@RequestBody UserDTO dto) {
+        User user = new User();
+        user.setEmail(dto.getEmail());
+        return userRepository.save(user); // ❌
+    }
+}
+\`\`\`
+
+✅ **Bon** : Logique dans le service
+\`\`\`java
+@Service
+public class UserService {
+    public User createUser(UserDTO dto) {
+        // Validation, mapping, logique métier ici
+        User user = new User();
+        user.setEmail(dto.getEmail());
+        return userRepository.save(user);
+    }
+}
+\`\`\`
+
+---
+
+## 📋 Checklist Service
+
+- [ ] Annoté avec @Service
+- [ ] Injection par constructeur (pas @Autowired sur field)
+- [ ] @Transactional sur les opérations d'écriture
+- [ ] readOnly=true pour les lectures
+- [ ] Validation métier appropriée
+- [ ] Gestion des erreurs avec exceptions métier
+- [ ] Mapping DTO ↔ Entity
+- [ ] Pas d'appels externes dans les transactions
+- [ ] Méthodes avec un seul niveau de responsabilité
+- [ ] Tests unitaires avec Mockito
+`
+      },
+      {
+        id: 'backend-controllers',
+        title: 'Les Controllers (API REST)',
+        category: GuideCategory.BACKEND,
+        icon: 'api',
+        color: '#10b981',
+        order: 4,
+        tags: ['Controller', 'REST API', 'HTTP', 'Spring MVC'],
+        lastUpdated: new Date(),
+        content: `# Les Controllers (API REST)
+
+## 📌 Définition
+
+Un **Controller** est le point d'entrée de votre API. Il reçoit les requêtes HTTP, appelle les services, et retourne les réponses.
+
+### Rôle dans l'architecture
+- **Couche Présentation** : Interface avec le monde extérieur
+- **Routing** : Mappe les URLs aux méthodes Java
+- **Validation** : Valide les données entrantes
+- **Sérialisation** : Convertit Java ↔ JSON
+
+---
+
+## 🚀 Controller de base
+
+### Structure simple
+
+\`\`\`java
+@RestController
+@RequestMapping("/api/users")
+@CrossOrigin(origins = "http://localhost:4200")
+public class UserController {
+
+    private final UserService userService;
+
+    @Autowired
+    public UserController(UserService userService) {
+        this.userService = userService;
+    }
+
+    // GET /api/users - Récupérer tous les utilisateurs
+    @GetMapping
+    public List<UserDTO> getAllUsers() {
+        return userService.getAllUsers();
+    }
+
+    // GET /api/users/123 - Récupérer un utilisateur par ID
+    @GetMapping("/{id}")
+    public UserDTO getUserById(@PathVariable Long id) {
+        return userService.getUserById(id);
+    }
+
+    // POST /api/users - Créer un utilisateur
+    @PostMapping
+    @ResponseStatus(HttpStatus.CREATED)
+    public UserDTO createUser(@RequestBody @Valid UserDTO userDTO) {
+        return userService.createUser(userDTO);
+    }
+
+    // PUT /api/users/123 - Mettre à jour un utilisateur
+    @PutMapping("/{id}")
+    public UserDTO updateUser(
+        @PathVariable Long id,
+        @RequestBody @Valid UserDTO userDTO
+    ) {
+        return userService.updateUser(id, userDTO);
+    }
+
+    // DELETE /api/users/123 - Supprimer un utilisateur
+    @DeleteMapping("/{id}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void deleteUser(@PathVariable Long id) {
+        userService.deleteUser(id);
+    }
+}
+\`\`\`
+
+---
+
+## 🎯 Annotations Principales
+
+### @RestController vs @Controller
+
+\`\`\`java
+// @RestController = @Controller + @ResponseBody
+@RestController // Retourne du JSON automatiquement
+public class UserController {
+    @GetMapping("/users")
+    public List<User> getUsers() {
+        return userService.getAllUsers(); // → JSON
+    }
+}
+
+// @Controller nécessite @ResponseBody manuel
+@Controller
+public class UserController {
+    @GetMapping("/users")
+    @ResponseBody // Obligatoire pour JSON
+    public List<User> getUsers() {
+        return userService.getAllUsers();
+    }
+}
+\`\`\`
+
+### Mapping HTTP
+
+\`\`\`java
+@RestController
+@RequestMapping("/api/products")
+public class ProductController {
+
+    @GetMapping // GET /api/products
+    @GetMapping("/{id}") // GET /api/products/123
+    @GetMapping("/search") // GET /api/products/search
+
+    @PostMapping // POST /api/products
+    @PutMapping("/{id}") // PUT /api/products/123
+    @PatchMapping("/{id}") // PATCH /api/products/123
+    @DeleteMapping("/{id}") // DELETE /api/products/123
+}
+\`\`\`
+
+---
+
+## 📥 Récupération de Données
+
+### @PathVariable
+
+\`\`\`java
+// GET /api/users/123
+@GetMapping("/{id}")
+public UserDTO getUserById(@PathVariable Long id) {
+    return userService.getUserById(id);
+}
+
+// GET /api/posts/5/comments/42
+@GetMapping("/{postId}/comments/{commentId}")
+public CommentDTO getComment(
+    @PathVariable Long postId,
+    @PathVariable Long commentId
+) {
+    return commentService.getComment(postId, commentId);
+}
+\`\`\`
+
+### @RequestParam
+
+\`\`\`java
+// GET /api/users?page=0&size=10&sort=name
+@GetMapping
+public Page<UserDTO> getUsers(
+    @RequestParam(defaultValue = "0") int page,
+    @RequestParam(defaultValue = "10") int size,
+    @RequestParam(defaultValue = "id") String sort
+) {
+    return userService.getUsers(page, size, sort);
+}
+
+// GET /api/products/search?name=laptop&minPrice=500
+@GetMapping("/search")
+public List<ProductDTO> searchProducts(
+    @RequestParam String name,
+    @RequestParam(required = false) Double minPrice,
+    @RequestParam(required = false) Double maxPrice
+) {
+    return productService.search(name, minPrice, maxPrice);
+}
+\`\`\`
+
+### @RequestBody
+
+\`\`\`java
+@PostMapping
+public UserDTO createUser(@RequestBody @Valid UserDTO userDTO) {
+    return userService.createUser(userDTO);
+}
+
+@PutMapping("/{id}")
+public UserDTO updateUser(
+    @PathVariable Long id,
+    @RequestBody @Valid UserDTO userDTO
+) {
+    return userService.updateUser(id, userDTO);
+}
+\`\`\`
+
+---
+
+## ✅ Validation avec @Valid
+
+### Dans le DTO
+
+\`\`\`java
+public class UserDTO {
+
+    @NotNull(message = "Email is required")
+    @Email(message = "Email must be valid")
+    private String email;
+
+    @NotBlank(message = "First name is required")
+    @Size(min = 2, max = 50, message = "First name must be between 2 and 50 characters")
+    private String firstName;
+
+    @NotBlank(message = "Last name is required")
+    private String lastName;
+
+    @Min(value = 18, message = "Age must be at least 18")
+    @Max(value = 120, message = "Age must be less than 120")
+    private Integer age;
+
+    @Pattern(regexp = "^\\+?[0-9]{10,15}$", message = "Phone number is invalid")
+    private String phoneNumber;
+}
+\`\`\`
+
+### Dans le Controller
+
+\`\`\`java
+@PostMapping
+public UserDTO createUser(@RequestBody @Valid UserDTO userDTO) {
+    return userService.createUser(userDTO);
+}
+\`\`\`
+
+---
+
+## 📤 ResponseEntity
+
+### Personnaliser les réponses HTTP
+
+\`\`\`java
+@RestController
+@RequestMapping("/api/users")
+public class UserController {
+
+    // Retour avec code 200 OK
+    @GetMapping("/{id}")
+    public ResponseEntity<UserDTO> getUserById(@PathVariable Long id) {
+        UserDTO user = userService.getUserById(id);
+        return ResponseEntity.ok(user);
+    }
+
+    // Retour avec code 201 CREATED + Location header
+    @PostMapping
+    public ResponseEntity<UserDTO> createUser(@RequestBody @Valid UserDTO userDTO) {
+        UserDTO created = userService.createUser(userDTO);
+        URI location = ServletUriComponentsBuilder
+            .fromCurrentRequest()
+            .path("/{id}")
+            .buildAndExpand(created.getId())
+            .toUri();
+        return ResponseEntity.created(location).body(created);
+    }
+
+    // Retour avec code 204 NO CONTENT
+    @DeleteMapping("/{id}")
+    public ResponseEntity<Void> deleteUser(@PathVariable Long id) {
+        userService.deleteUser(id);
+        return ResponseEntity.noContent().build();
+    }
+
+    // Retour avec headers personnalisés
+    @GetMapping("/{id}/download")
+    public ResponseEntity<byte[]> downloadUserData(@PathVariable Long id) {
+        byte[] data = userService.exportUserData(id);
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_PDF);
+        headers.setContentDisposition(ContentDisposition.attachment().filename("user-data.pdf").build());
+
+        return new ResponseEntity<>(data, headers, HttpStatus.OK);
+    }
+}
+\`\`\`
+
+---
+
+## 🔄 Pagination et Tri
+
+\`\`\`java
+@RestController
+@RequestMapping("/api/articles")
+public class ArticleController {
+
+    @GetMapping
+    public ResponseEntity<Page<ArticleDTO>> getArticles(
+        @RequestParam(defaultValue = "0") int page,
+        @RequestParam(defaultValue = "10") int size,
+        @RequestParam(defaultValue = "createdAt") String sortBy,
+        @RequestParam(defaultValue = "DESC") String direction
+    ) {
+        Sort.Direction sortDirection = Sort.Direction.fromString(direction);
+        Pageable pageable = PageRequest.of(page, size, Sort.by(sortDirection, sortBy));
+
+        Page<ArticleDTO> articles = articleService.getArticles(pageable);
+        return ResponseEntity.ok(articles);
+    }
+}
+
+// Réponse JSON :
+{
+  "content": [ /* articles */ ],
+  "totalElements": 100,
+  "totalPages": 10,
+  "number": 0,
+  "size": 10,
+  "first": true,
+  "last": false
+}
+\`\`\`
+
+---
+
+## 🛡️ Gestion des Erreurs
+
+### @ExceptionHandler local
+
+\`\`\`java
+@RestController
+@RequestMapping("/api/users")
+public class UserController {
+
+    @GetMapping("/{id}")
+    public UserDTO getUserById(@PathVariable Long id) {
+        return userService.getUserById(id);
+    }
+
+    @ExceptionHandler(UserNotFoundException.class)
+    public ResponseEntity<ErrorResponse> handleUserNotFound(UserNotFoundException ex) {
+        ErrorResponse error = new ErrorResponse(
+            HttpStatus.NOT_FOUND.value(),
+            ex.getMessage(),
+            LocalDateTime.now()
+        );
+        return new ResponseEntity<>(error, HttpStatus.NOT_FOUND);
+    }
+}
+\`\`\`
+
+### @ControllerAdvice global (recommandé)
+
+\`\`\`java
+@RestControllerAdvice
+public class GlobalExceptionHandler {
+
+    @ExceptionHandler(UserNotFoundException.class)
+    public ResponseEntity<ErrorResponse> handleUserNotFound(UserNotFoundException ex) {
+        ErrorResponse error = new ErrorResponse(
+            HttpStatus.NOT_FOUND.value(),
+            ex.getMessage(),
+            LocalDateTime.now()
+        );
+        return new ResponseEntity<>(error, HttpStatus.NOT_FOUND);
+    }
+
+    @ExceptionHandler(MethodArgumentNotValidException.class)
+    public ResponseEntity<Map<String, String>> handleValidationErrors(MethodArgumentNotValidException ex) {
+        Map<String, String> errors = new HashMap<>();
+        ex.getBindingResult().getFieldErrors().forEach(error ->
+            errors.put(error.getField(), error.getDefaultMessage())
+        );
+        return new ResponseEntity<>(errors, HttpStatus.BAD_REQUEST);
+    }
+
+    @ExceptionHandler(Exception.class)
+    public ResponseEntity<ErrorResponse> handleGenericException(Exception ex) {
+        ErrorResponse error = new ErrorResponse(
+            HttpStatus.INTERNAL_SERVER_ERROR.value(),
+            "An unexpected error occurred",
+            LocalDateTime.now()
+        );
+        return new ResponseEntity<>(error, HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+}
+\`\`\`
+
+---
+
+## 🌐 CORS Configuration
+
+### Par Controller
+
+\`\`\`java
+@RestController
+@RequestMapping("/api/users")
+@CrossOrigin(origins = "http://localhost:4200")
+public class UserController {
+    // ...
+}
+\`\`\`
+
+### Configuration globale (recommandé)
+
+\`\`\`java
+@Configuration
+public class CorsConfig implements WebMvcConfigurer {
+
+    @Override
+    public void addCorsMappings(CorsRegistry registry) {
+        registry.addMapping("/api/**")
+            .allowedOrigins("http://localhost:4200", "https://myapp.com")
+            .allowedMethods("GET", "POST", "PUT", "DELETE", "PATCH")
+            .allowedHeaders("*")
+            .allowCredentials(true)
+            .maxAge(3600);
+    }
+}
+\`\`\`
+
+---
+
+## 🎨 Exemples Complets
+
+### Controller CRUD complet
+
+\`\`\`java
+@RestController
+@RequestMapping("/api/products")
+@CrossOrigin(origins = "*")
+public class ProductController {
+
+    private final ProductService productService;
+
+    @Autowired
+    public ProductController(ProductService productService) {
+        this.productService = productService;
+    }
+
+    @GetMapping
+    public ResponseEntity<Page<ProductDTO>> getAllProducts(
+        @RequestParam(defaultValue = "0") int page,
+        @RequestParam(defaultValue = "10") int size
+    ) {
+        Page<ProductDTO> products = productService.getAllProducts(page, size);
+        return ResponseEntity.ok(products);
+    }
+
+    @GetMapping("/{id}")
+    public ResponseEntity<ProductDTO> getProductById(@PathVariable Long id) {
+        ProductDTO product = productService.getProductById(id);
+        return ResponseEntity.ok(product);
+    }
+
+    @GetMapping("/search")
+    public ResponseEntity<List<ProductDTO>> searchProducts(@RequestParam String name) {
+        List<ProductDTO> products = productService.searchByName(name);
+        return ResponseEntity.ok(products);
+    }
+
+    @PostMapping
+    public ResponseEntity<ProductDTO> createProduct(@RequestBody @Valid ProductDTO productDTO) {
+        ProductDTO created = productService.createProduct(productDTO);
+        URI location = ServletUriComponentsBuilder
+            .fromCurrentRequest()
+            .path("/{id}")
+            .buildAndExpand(created.getId())
+            .toUri();
+        return ResponseEntity.created(location).body(created);
+    }
+
+    @PutMapping("/{id}")
+    public ResponseEntity<ProductDTO> updateProduct(
+        @PathVariable Long id,
+        @RequestBody @Valid ProductDTO productDTO
+    ) {
+        ProductDTO updated = productService.updateProduct(id, productDTO);
+        return ResponseEntity.ok(updated);
+    }
+
+    @DeleteMapping("/{id}")
+    public ResponseEntity<Void> deleteProduct(@PathVariable Long id) {
+        productService.deleteProduct(id);
+        return ResponseEntity.noContent().build();
+    }
+}
+\`\`\`
+
+---
+
+## ⚠️ Erreurs Courantes
+
+### 1. Logique métier dans le Controller
+❌ **Mauvais**
+\`\`\`java
+@PostMapping
+public User createUser(@RequestBody UserDTO dto) {
+    User user = new User();
+    user.setEmail(dto.getEmail());
+    return userRepository.save(user); // ❌
+}
+\`\`\`
+
+✅ **Bon**
+\`\`\`java
+@PostMapping
+public UserDTO createUser(@RequestBody @Valid UserDTO dto) {
+    return userService.createUser(dto); // ✅
+}
+\`\`\`
+
+### 2. Oublier @Valid
+\`\`\`java
+@PostMapping
+public UserDTO createUser(@RequestBody @Valid UserDTO dto) { // @Valid important !
+    return userService.createUser(dto);
+}
+\`\`\`
+
+### 3. Exposer les entités directement
+❌ Exposer User (Entity)
+✅ Exposer UserDTO (Data Transfer Object)
+
+---
+
+## 📋 Checklist Controller
+
+- [ ] Annoté avec @RestController
+- [ ] @RequestMapping avec préfixe d'API (/api/...)
+- [ ] Injection du service par constructeur
+- [ ] @Valid sur les @RequestBody
+- [ ] ResponseEntity pour codes HTTP personnalisés
+- [ ] Gestion des erreurs avec @ExceptionHandler
+- [ ] CORS configuré si frontend séparé
+- [ ] Pagination pour les listes
+- [ ] Documentation avec Swagger/OpenAPI
+- [ ] Pas de logique métier dans le controller
+- [ ] Utiliser des DTOs, pas des entities
+`
+      },
       // Placeholder pour les autres guides (à remplir progressivement)
       {
         id: 'architecture-uml',
@@ -3404,6 +4433,2611 @@ export class UsersComponent {
 - [ ] BehaviorSubject pour état partagé
 - [ ] Désabonnement des Observables
 - [ ] Tests unitaires du service
+`
+      },
+      {
+        id: 'frontend-routing',
+        title: 'Routing & Navigation',
+        category: GuideCategory.FRONTEND,
+        icon: 'alt_route',
+        color: '#3b82f6',
+        order: 3,
+        tags: ['Routing', 'Navigation', 'Guards', 'Router'],
+        lastUpdated: new Date(),
+        content: `# Routing & Navigation Angular
+
+## 📌 Qu'est-ce que le Routing ?
+
+Le **routing** permet de naviguer entre différentes vues (composants) dans une application Angular. Il gère l'URL du navigateur et affiche le composant correspondant.
+
+---
+
+## 🚀 Configuration du Router
+
+### Installation et configuration initiale
+
+\`\`\`typescript
+// app.routes.ts
+import { Routes } from '@angular/router';
+import { HomeComponent } from './components/home/home.component';
+import { AboutComponent } from './components/about/about.component';
+import { UserListComponent } from './components/users/user-list.component';
+import { UserDetailComponent } from './components/users/user-detail.component';
+
+export const routes: Routes = [
+  {
+    path: '',
+    component: HomeComponent
+  },
+  {
+    path: 'about',
+    component: AboutComponent
+  },
+  {
+    path: 'users',
+    component: UserListComponent
+  },
+  {
+    path: 'users/:id',
+    component: UserDetailComponent
+  },
+  {
+    path: '**',
+    redirectTo: '/'
+  }
+];
+\`\`\`
+
+### Configuration dans app.config.ts
+
+\`\`\`typescript
+// app.config.ts
+import { ApplicationConfig } from '@angular/core';
+import { provideRouter } from '@angular/router';
+import { routes } from './app.routes';
+
+export const appConfig: ApplicationConfig = {
+  providers: [
+    provideRouter(routes)
+  ]
+};
+\`\`\`
+
+### Afficher les routes avec <router-outlet>
+
+\`\`\`html
+<!-- app.component.html -->
+<nav>
+  <a routerLink="/">Accueil</a>
+  <a routerLink="/about">À propos</a>
+  <a routerLink="/users">Utilisateurs</a>
+</nav>
+
+<router-outlet></router-outlet>
+\`\`\`
+
+---
+
+## 🔗 Navigation entre routes
+
+### routerLink dans le template
+
+\`\`\`html
+<!-- Navigation simple -->
+<a routerLink="/about">À propos</a>
+
+<!-- Avec paramètres -->
+<a [routerLink]="['/users', user.id]">Voir {{ user.name }}</a>
+
+<!-- Avec classe active -->
+<a routerLink="/about" routerLinkActive="active">À propos</a>
+
+<!-- Classe active avec options -->
+<a
+  routerLink="/users"
+  routerLinkActive="active"
+  [routerLinkActiveOptions]="{ exact: true }"
+>
+  Utilisateurs
+</a>
+\`\`\`
+
+### Navigation programmatique
+
+\`\`\`typescript
+import { Component } from '@angular/core';
+import { Router } from '@angular/router';
+
+@Component({
+  selector: 'app-user-list',
+  template: \`
+    <button (click)="goToUser(123)">Voir utilisateur</button>
+    <button (click)="goBack()">Retour</button>
+  \`
+})
+export class UserListComponent {
+  constructor(private router: Router) {}
+
+  goToUser(id: number): void {
+    // Navigation simple
+    this.router.navigate(['/users', id]);
+  }
+
+  goToAbout(): void {
+    // Navigation avec query params
+    this.router.navigate(['/about'], {
+      queryParams: { from: 'users' }
+    });
+  }
+
+  goBack(): void {
+    // Retour arrière
+    this.router.navigate(['..']);
+  }
+}
+\`\`\`
+
+---
+
+## 📋 Paramètres de route
+
+### Route params (:id)
+
+\`\`\`typescript
+// Route définie avec :id
+{ path: 'users/:id', component: UserDetailComponent }
+
+// Récupérer le paramètre dans le composant
+import { Component, OnInit } from '@angular/core';
+import { ActivatedRoute } from '@angular/router';
+
+@Component({
+  selector: 'app-user-detail',
+  template: \`<h1>Utilisateur #{{ userId }}</h1>\`
+})
+export class UserDetailComponent implements OnInit {
+  userId: string = '';
+
+  constructor(private route: ActivatedRoute) {}
+
+  ngOnInit(): void {
+    // Méthode 1: Snapshot (valeur immédiate)
+    this.userId = this.route.snapshot.paramMap.get('id') || '';
+
+    // Méthode 2: Observable (réagit aux changements)
+    this.route.paramMap.subscribe(params => {
+      this.userId = params.get('id') || '';
+    });
+  }
+}
+\`\`\`
+
+### Query params (?page=1&sort=name)
+
+\`\`\`typescript
+// Navigation avec query params
+this.router.navigate(['/users'], {
+  queryParams: { page: 1, sort: 'name' }
+});
+
+// Récupérer les query params
+import { ActivatedRoute } from '@angular/router';
+
+@Component({
+  selector: 'app-user-list'
+})
+export class UserListComponent implements OnInit {
+  page: number = 1;
+  sort: string = 'name';
+
+  constructor(private route: ActivatedRoute) {}
+
+  ngOnInit(): void {
+    // Méthode 1: Snapshot
+    this.page = Number(this.route.snapshot.queryParamMap.get('page')) || 1;
+
+    // Méthode 2: Observable
+    this.route.queryParamMap.subscribe(params => {
+      this.page = Number(params.get('page')) || 1;
+      this.sort = params.get('sort') || 'name';
+    });
+  }
+}
+\`\`\`
+
+---
+
+## 🛡️ Route Guards
+
+Les **guards** protègent les routes et contrôlent l'accès.
+
+### CanActivate - Protéger une route
+
+\`\`\`typescript
+// auth.guard.ts
+import { inject } from '@angular/core';
+import { Router, CanActivateFn } from '@angular/router';
+import { AuthService } from '../services/auth.service';
+
+export const authGuard: CanActivateFn = (route, state) => {
+  const authService = inject(AuthService);
+  const router = inject(Router);
+
+  if (authService.isAuthenticated()) {
+    return true;
+  }
+
+  // Rediriger vers login si non authentifié
+  router.navigate(['/login'], {
+    queryParams: { returnUrl: state.url }
+  });
+  return false;
+};
+\`\`\`
+
+\`\`\`typescript
+// Utiliser le guard dans les routes
+export const routes: Routes = [
+  {
+    path: 'dashboard',
+    component: DashboardComponent,
+    canActivate: [authGuard]  // Protégé par le guard
+  },
+  {
+    path: 'admin',
+    canActivate: [authGuard, adminGuard],  // Multiple guards
+    children: [
+      { path: 'users', component: AdminUsersComponent },
+      { path: 'settings', component: AdminSettingsComponent }
+    ]
+  }
+];
+\`\`\`
+
+### CanDeactivate - Confirmer avant de quitter
+
+\`\`\`typescript
+// unsaved-changes.guard.ts
+import { CanDeactivateFn } from '@angular/router';
+
+export interface CanComponentDeactivate {
+  canDeactivate: () => boolean;
+}
+
+export const unsavedChangesGuard: CanDeactivateFn<CanComponentDeactivate> =
+  (component) => {
+    return component.canDeactivate ?
+      component.canDeactivate() :
+      true;
+  };
+\`\`\`
+
+\`\`\`typescript
+// edit-user.component.ts
+@Component({
+  selector: 'app-edit-user'
+})
+export class EditUserComponent implements CanComponentDeactivate {
+  hasUnsavedChanges = false;
+
+  canDeactivate(): boolean {
+    if (this.hasUnsavedChanges) {
+      return confirm('Vous avez des modifications non sauvegardées. Quitter ?');
+    }
+    return true;
+  }
+}
+\`\`\`
+
+\`\`\`typescript
+// Route avec CanDeactivate
+{
+  path: 'users/:id/edit',
+  component: EditUserComponent,
+  canDeactivate: [unsavedChangesGuard]
+}
+\`\`\`
+
+---
+
+## 📦 Lazy Loading
+
+Charger les modules à la demande pour améliorer les performances.
+
+\`\`\`typescript
+// app.routes.ts
+export const routes: Routes = [
+  {
+    path: '',
+    component: HomeComponent
+  },
+  {
+    path: 'admin',
+    loadChildren: () =>
+      import('./features/admin/admin.routes').then(m => m.ADMIN_ROUTES)
+  },
+  {
+    path: 'users',
+    loadComponent: () =>
+      import('./features/users/user-list.component').then(m => m.UserListComponent)
+  }
+];
+\`\`\`
+
+\`\`\`typescript
+// admin.routes.ts
+import { Routes } from '@angular/router';
+import { AdminDashboardComponent } from './admin-dashboard.component';
+import { AdminUsersComponent } from './admin-users.component';
+
+export const ADMIN_ROUTES: Routes = [
+  {
+    path: '',
+    component: AdminDashboardComponent
+  },
+  {
+    path: 'users',
+    component: AdminUsersComponent
+  }
+];
+\`\`\`
+
+---
+
+## 🎯 Routes avec Layout
+
+Créer des layouts pour structurer l'application.
+
+\`\`\`typescript
+// app.routes.ts
+export const routes: Routes = [
+  {
+    path: '',
+    component: MainLayoutComponent,
+    children: [
+      { path: '', component: HomeComponent },
+      { path: 'about', component: AboutComponent },
+      { path: 'contact', component: ContactComponent }
+    ]
+  },
+  {
+    path: 'admin',
+    component: AdminLayoutComponent,
+    canActivate: [authGuard],
+    children: [
+      { path: '', component: AdminDashboardComponent },
+      { path: 'users', component: AdminUsersComponent },
+      { path: 'settings', component: AdminSettingsComponent }
+    ]
+  }
+];
+\`\`\`
+
+\`\`\`html
+<!-- main-layout.component.html -->
+<header>
+  <nav><!-- Navigation publique --></nav>
+</header>
+
+<main>
+  <router-outlet></router-outlet>
+</main>
+
+<footer><!-- Footer --></footer>
+\`\`\`
+
+---
+
+## 📋 Bonnes Pratiques
+
+### 1. Utiliser des routes nommées
+
+\`\`\`typescript
+// ❌ Éviter les chemins hardcodés
+this.router.navigate(['/users/123/edit']);
+
+// ✅ Utiliser des paramètres
+this.router.navigate(['/users', userId, 'edit']);
+\`\`\`
+
+### 2. Gérer les erreurs de navigation
+
+\`\`\`typescript
+this.router.navigate(['/users', id])
+  .then(() => console.log('Navigation réussie'))
+  .catch(err => console.error('Erreur navigation:', err));
+\`\`\`
+
+### 3. Précharger les modules
+
+\`\`\`typescript
+import { PreloadAllModules } from '@angular/router';
+
+export const appConfig: ApplicationConfig = {
+  providers: [
+    provideRouter(
+      routes,
+      withPreloading(PreloadAllModules)  // Précharge tous les modules lazy
+    )
+  ]
+};
+\`\`\`
+
+### 4. Désabonner des Observables
+
+\`\`\`typescript
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+
+@Component({
+  selector: 'app-user-detail'
+})
+export class UserDetailComponent {
+  private destroyRef = inject(DestroyRef);
+
+  ngOnInit(): void {
+    this.route.paramMap
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe(params => {
+        // Traitement
+      });
+  }
+}
+\`\`\`
+
+---
+
+## 📋 Checklist Routing
+
+- [ ] Routes définies dans app.routes.ts
+- [ ] <router-outlet> dans app.component.html
+- [ ] routerLink pour navigation
+- [ ] routerLinkActive pour classes CSS actives
+- [ ] Guards pour protéger les routes
+- [ ] Lazy loading pour modules lourds
+- [ ] Gestion des paramètres avec ActivatedRoute
+- [ ] Page 404 avec route wildcard (**)
+- [ ] Tests de navigation
+`
+      },
+      {
+        id: 'frontend-forms',
+        title: 'Les Formulaires Angular',
+        category: GuideCategory.FRONTEND,
+        icon: 'edit_note',
+        color: '#3b82f6',
+        order: 4,
+        tags: ['Forms', 'Reactive Forms', 'Template-driven', 'Validation'],
+        lastUpdated: new Date(),
+        content: `# Les Formulaires Angular
+
+## 📌 Deux approches de formulaires
+
+Angular propose **deux façons** de créer des formulaires :
+
+### 1. Template-driven Forms
+- Logique dans le template HTML
+- Utilise ngModel
+- Simple pour formulaires basiques
+
+### 2. Reactive Forms
+- Logique dans le composant TypeScript
+- Plus de contrôle et testable
+- Recommandé pour formulaires complexes
+
+---
+
+## 📝 Template-driven Forms
+
+### Configuration
+
+\`\`\`typescript
+// app.config.ts
+import { provideHttpClient } from '@angular/common/http';
+import { ApplicationConfig } from '@angular/core';
+
+export const appConfig: ApplicationConfig = {
+  providers: [
+    // FormsModule est importé automatiquement depuis Angular 15+
+  ]
+};
+\`\`\`
+
+### Exemple basique
+
+\`\`\`typescript
+// login.component.ts
+import { Component } from '@angular/core';
+import { FormsModule } from '@angular/forms';
+
+@Component({
+  selector: 'app-login',
+  standalone: true,
+  imports: [FormsModule],
+  templateUrl: './login.component.html'
+})
+export class LoginComponent {
+  user = {
+    email: '',
+    password: ''
+  };
+
+  onSubmit(): void {
+    console.log('Connexion:', this.user);
+  }
+}
+\`\`\`
+
+\`\`\`html
+<!-- login.component.html -->
+<form #loginForm="ngForm" (ngSubmit)="onSubmit()">
+  <div>
+    <label for="email">Email</label>
+    <input
+      type="email"
+      id="email"
+      name="email"
+      [(ngModel)]="user.email"
+      required
+      email
+    >
+  </div>
+
+  <div>
+    <label for="password">Mot de passe</label>
+    <input
+      type="password"
+      id="password"
+      name="password"
+      [(ngModel)]="user.password"
+      required
+      minlength="6"
+    >
+  </div>
+
+  <button type="submit" [disabled]="!loginForm.valid">
+    Se connecter
+  </button>
+</form>
+\`\`\`
+
+### Validation Template-driven
+
+\`\`\`html
+<!-- Afficher les erreurs -->
+<form #loginForm="ngForm" (ngSubmit)="onSubmit()">
+  <div>
+    <input
+      type="email"
+      name="email"
+      [(ngModel)]="user.email"
+      #email="ngModel"
+      required
+      email
+    >
+
+    <!-- Messages d'erreur -->
+    <div *ngIf="email.invalid && (email.dirty || email.touched)">
+      <p *ngIf="email.errors?.['required']">Email requis</p>
+      <p *ngIf="email.errors?.['email']">Email invalide</p>
+    </div>
+  </div>
+</form>
+\`\`\`
+
+---
+
+## ⚙️ Reactive Forms (Recommandé)
+
+### Configuration
+
+\`\`\`typescript
+// login.component.ts
+import { Component, OnInit } from '@angular/core';
+import { FormBuilder, FormGroup, Validators, ReactiveFormsModule } from '@angular/forms';
+import { CommonModule } from '@angular/common';
+
+@Component({
+  selector: 'app-login',
+  standalone: true,
+  imports: [CommonModule, ReactiveFormsModule],
+  templateUrl: './login.component.html'
+})
+export class LoginComponent implements OnInit {
+  loginForm!: FormGroup;
+
+  constructor(private fb: FormBuilder) {}
+
+  ngOnInit(): void {
+    this.loginForm = this.fb.group({
+      email: ['', [Validators.required, Validators.email]],
+      password: ['', [Validators.required, Validators.minLength(6)]]
+    });
+  }
+
+  onSubmit(): void {
+    if (this.loginForm.valid) {
+      console.log('Form data:', this.loginForm.value);
+    }
+  }
+
+  // Getters pour faciliter l'accès
+  get email() {
+    return this.loginForm.get('email');
+  }
+
+  get password() {
+    return this.loginForm.get('password');
+  }
+}
+\`\`\`
+
+\`\`\`html
+<!-- login.component.html -->
+<form [formGroup]="loginForm" (ngSubmit)="onSubmit()">
+  <div>
+    <label for="email">Email</label>
+    <input
+      type="email"
+      id="email"
+      formControlName="email"
+    >
+
+    <!-- Messages d'erreur -->
+    <div *ngIf="email?.invalid && (email?.dirty || email?.touched)">
+      <p *ngIf="email?.errors?.['required']">Email requis</p>
+      <p *ngIf="email?.errors?.['email']">Email invalide</p>
+    </div>
+  </div>
+
+  <div>
+    <label for="password">Mot de passe</label>
+    <input
+      type="password"
+      id="password"
+      formControlName="password"
+    >
+
+    <div *ngIf="password?.invalid && (password?.dirty || password?.touched)">
+      <p *ngIf="password?.errors?.['required']">Mot de passe requis</p>
+      <p *ngIf="password?.errors?.['minlength']">
+        Minimum 6 caractères
+      </p>
+    </div>
+  </div>
+
+  <button type="submit" [disabled]="loginForm.invalid">
+    Se connecter
+  </button>
+</form>
+\`\`\`
+
+---
+
+## ✅ Validateurs personnalisés
+
+### Validateur simple
+
+\`\`\`typescript
+// validators/custom.validators.ts
+import { AbstractControl, ValidationErrors, ValidatorFn } from '@angular/forms';
+
+export class CustomValidators {
+  // Validateur de confirmation de mot de passe
+  static passwordMatch(controlName: string, matchingControlName: string): ValidatorFn {
+    return (formGroup: AbstractControl): ValidationErrors | null => {
+      const control = formGroup.get(controlName);
+      const matchingControl = formGroup.get(matchingControlName);
+
+      if (!control || !matchingControl) {
+        return null;
+      }
+
+      if (matchingControl.errors && !matchingControl.errors['passwordMatch']) {
+        return null;
+      }
+
+      if (control.value !== matchingControl.value) {
+        matchingControl.setErrors({ passwordMatch: true });
+        return { passwordMatch: true };
+      } else {
+        matchingControl.setErrors(null);
+        return null;
+      }
+    };
+  }
+
+  // Validateur de domaine email
+  static emailDomain(domain: string): ValidatorFn {
+    return (control: AbstractControl): ValidationErrors | null => {
+      const email = control.value;
+      if (email && !email.endsWith(\`@\${domain}\`)) {
+        return { emailDomain: { requiredDomain: domain } };
+      }
+      return null;
+    };
+  }
+}
+\`\`\`
+
+\`\`\`typescript
+// Utilisation
+this.registerForm = this.fb.group({
+  email: ['', [
+    Validators.required,
+    Validators.email,
+    CustomValidators.emailDomain('company.com')
+  ]],
+  password: ['', [Validators.required, Validators.minLength(8)]],
+  confirmPassword: ['', Validators.required]
+}, {
+  validators: CustomValidators.passwordMatch('password', 'confirmPassword')
+});
+\`\`\`
+
+---
+
+## 🎯 Formulaires imbriqués
+
+### FormGroup imbriqué
+
+\`\`\`typescript
+// user-form.component.ts
+@Component({
+  selector: 'app-user-form'
+})
+export class UserFormComponent implements OnInit {
+  userForm!: FormGroup;
+
+  constructor(private fb: FormBuilder) {}
+
+  ngOnInit(): void {
+    this.userForm = this.fb.group({
+      personalInfo: this.fb.group({
+        firstName: ['', Validators.required],
+        lastName: ['', Validators.required],
+        email: ['', [Validators.required, Validators.email]]
+      }),
+      address: this.fb.group({
+        street: [''],
+        city: ['', Validators.required],
+        zipCode: ['', Validators.required],
+        country: ['France']
+      })
+    });
+  }
+
+  onSubmit(): void {
+    console.log(this.userForm.value);
+    // {
+    //   personalInfo: { firstName: 'John', lastName: 'Doe', email: '...' },
+    //   address: { street: '...', city: '...', zipCode: '...', country: 'France' }
+    // }
+  }
+}
+\`\`\`
+
+\`\`\`html
+<!-- user-form.component.html -->
+<form [formGroup]="userForm" (ngSubmit)="onSubmit()">
+  <!-- Groupe informations personnelles -->
+  <fieldset formGroupName="personalInfo">
+    <legend>Informations personnelles</legend>
+
+    <input formControlName="firstName" placeholder="Prénom">
+    <input formControlName="lastName" placeholder="Nom">
+    <input formControlName="email" placeholder="Email">
+  </fieldset>
+
+  <!-- Groupe adresse -->
+  <fieldset formGroupName="address">
+    <legend>Adresse</legend>
+
+    <input formControlName="street" placeholder="Rue">
+    <input formControlName="city" placeholder="Ville">
+    <input formControlName="zipCode" placeholder="Code postal">
+    <input formControlName="country" placeholder="Pays">
+  </fieldset>
+
+  <button type="submit" [disabled]="userForm.invalid">Enregistrer</button>
+</form>
+\`\`\`
+
+---
+
+## 📋 FormArray - Listes dynamiques
+
+### Ajouter/Supprimer des champs
+
+\`\`\`typescript
+// skills-form.component.ts
+import { FormArray } from '@angular/forms';
+
+@Component({
+  selector: 'app-skills-form'
+})
+export class SkillsFormComponent implements OnInit {
+  skillsForm!: FormGroup;
+
+  constructor(private fb: FormBuilder) {}
+
+  ngOnInit(): void {
+    this.skillsForm = this.fb.group({
+      name: ['', Validators.required],
+      skills: this.fb.array([
+        this.createSkillControl()
+      ])
+    });
+  }
+
+  get skills(): FormArray {
+    return this.skillsForm.get('skills') as FormArray;
+  }
+
+  createSkillControl(): FormGroup {
+    return this.fb.group({
+      name: ['', Validators.required],
+      level: ['', Validators.required]
+    });
+  }
+
+  addSkill(): void {
+    this.skills.push(this.createSkillControl());
+  }
+
+  removeSkill(index: number): void {
+    this.skills.removeAt(index);
+  }
+
+  onSubmit(): void {
+    console.log(this.skillsForm.value);
+  }
+}
+\`\`\`
+
+\`\`\`html
+<!-- skills-form.component.html -->
+<form [formGroup]="skillsForm" (ngSubmit)="onSubmit()">
+  <input formControlName="name" placeholder="Nom">
+
+  <div formArrayName="skills">
+    <div *ngFor="let skill of skills.controls; let i = index" [formGroupName]="i">
+      <input formControlName="name" placeholder="Compétence">
+      <select formControlName="level">
+        <option value="">Niveau</option>
+        <option value="beginner">Débutant</option>
+        <option value="intermediate">Intermédiaire</option>
+        <option value="advanced">Avancé</option>
+      </select>
+      <button type="button" (click)="removeSkill(i)">Supprimer</button>
+    </div>
+  </div>
+
+  <button type="button" (click)="addSkill()">Ajouter une compétence</button>
+  <button type="submit" [disabled]="skillsForm.invalid">Enregistrer</button>
+</form>
+\`\`\`
+
+---
+
+## 🔄 Réactivité et ValueChanges
+
+### Écouter les changements
+
+\`\`\`typescript
+ngOnInit(): void {
+  this.loginForm = this.fb.group({
+    email: [''],
+    password: ['']
+  });
+
+  // Écouter tous les changements du formulaire
+  this.loginForm.valueChanges.subscribe(value => {
+    console.log('Form changed:', value);
+  });
+
+  // Écouter un champ spécifique
+  this.loginForm.get('email')?.valueChanges.subscribe(email => {
+    console.log('Email changed:', email);
+  });
+
+  // Avec debounceTime pour réduire les appels
+  this.loginForm.get('email')?.valueChanges
+    .pipe(
+      debounceTime(300),
+      distinctUntilChanged()
+    )
+    .subscribe(email => {
+      console.log('Email (debounced):', email);
+    });
+}
+\`\`\`
+
+---
+
+## 📋 Bonnes Pratiques
+
+### 1. Préférer Reactive Forms
+
+\`\`\`typescript
+// ✅ Bon : Reactive Forms (testable, scalable)
+this.form = this.fb.group({
+  email: ['', [Validators.required, Validators.email]]
+});
+
+// ❌ Éviter : Template-driven pour formulaires complexes
+<input [(ngModel)]="email" required email>
+\`\`\`
+
+### 2. Créer des getters pour les contrôles
+
+\`\`\`typescript
+// ✅ Bon : Getter réutilisable
+get email() {
+  return this.form.get('email');
+}
+
+// Dans le template
+<div *ngIf="email?.invalid">...</div>
+
+// ❌ Éviter : Répétition
+<div *ngIf="form.get('email')?.invalid">...</div>
+\`\`\`
+
+### 3. Désabonner les observables
+
+\`\`\`typescript
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+
+export class MyComponent {
+  private destroyRef = inject(DestroyRef);
+
+  ngOnInit(): void {
+    this.form.valueChanges
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe(value => {
+        // Traitement
+      });
+  }
+}
+\`\`\`
+
+### 4. Valider côté serveur
+
+\`\`\`typescript
+// Validateur asynchrone
+emailExists(): AsyncValidatorFn {
+  return (control: AbstractControl): Observable<ValidationErrors | null> => {
+    return this.userService.checkEmailExists(control.value).pipe(
+      map(exists => exists ? { emailExists: true } : null),
+      catchError(() => of(null))
+    );
+  };
+}
+
+// Utilisation
+this.form = this.fb.group({
+  email: ['',
+    [Validators.required, Validators.email],
+    [this.emailExists()]  // Validateur asynchrone
+  ]
+});
+\`\`\`
+
+---
+
+## 📋 Checklist Formulaires
+
+- [ ] Utiliser Reactive Forms pour formulaires complexes
+- [ ] Ajouter les validations (required, email, minLength, etc.)
+- [ ] Créer des validateurs personnalisés si nécessaire
+- [ ] Afficher les messages d'erreur appropriés
+- [ ] Désactiver le bouton submit si formulaire invalide
+- [ ] Gérer les états (pristine, dirty, touched, invalid)
+- [ ] Désabonner les observables avec takeUntilDestroyed
+- [ ] Tester les validations avec des tests unitaires
+`
+      },
+      {
+        id: 'frontend-http',
+        title: 'HTTP Client & API',
+        category: GuideCategory.FRONTEND,
+        icon: 'http',
+        color: '#3b82f6',
+        order: 5,
+        tags: ['HTTP', 'API', 'REST', 'Interceptors'],
+        lastUpdated: new Date(),
+        content: `# HTTP Client & API Integration
+
+## 📌 Qu'est-ce que HttpClient ?
+
+Le **HttpClient** d'Angular permet de communiquer avec des API backend via HTTP. Il est basé sur les **Observables** de RxJS.
+
+---
+
+## 🚀 Configuration
+
+### Activer HttpClient
+
+\`\`\`typescript
+// app.config.ts
+import { ApplicationConfig } from '@angular/core';
+import { provideHttpClient, withInterceptors } from '@angular/common/http';
+
+export const appConfig: ApplicationConfig = {
+  providers: [
+    provideHttpClient()
+  ]
+};
+\`\`\`
+
+---
+
+## 🔧 Requêtes HTTP de base
+
+### GET - Récupérer des données
+
+\`\`\`typescript
+// user.service.ts
+import { Injectable } from '@angular/core';
+import { HttpClient } from '@angular/common/http';
+import { Observable } from 'rxjs';
+
+export interface User {
+  id: number;
+  name: string;
+  email: string;
+}
+
+@Injectable({
+  providedIn: 'root'
+})
+export class UserService {
+  private apiUrl = 'http://localhost:8080/api/users';
+
+  constructor(private http: HttpClient) {}
+
+  // GET /api/users
+  getUsers(): Observable<User[]> {
+    return this.http.get<User[]>(this.apiUrl);
+  }
+
+  // GET /api/users/123
+  getUserById(id: number): Observable<User> {
+    return this.http.get<User>(\`\${this.apiUrl}/\${id}\`);
+  }
+}
+\`\`\`
+
+\`\`\`typescript
+// user-list.component.ts
+@Component({
+  selector: 'app-user-list',
+  template: \`
+    <div *ngFor="let user of users">
+      {{ user.name }} - {{ user.email }}
+    </div>
+  \`
+})
+export class UserListComponent implements OnInit {
+  users: User[] = [];
+
+  constructor(private userService: UserService) {}
+
+  ngOnInit(): void {
+    this.userService.getUsers().subscribe({
+      next: (users) => this.users = users,
+      error: (err) => console.error('Erreur:', err)
+    });
+  }
+}
+\`\`\`
+
+### POST - Créer des données
+
+\`\`\`typescript
+// user.service.ts
+createUser(user: Omit<User, 'id'>): Observable<User> {
+  return this.http.post<User>(this.apiUrl, user);
+}
+\`\`\`
+
+\`\`\`typescript
+// create-user.component.ts
+@Component({
+  selector: 'app-create-user'
+})
+export class CreateUserComponent {
+  constructor(private userService: UserService) {}
+
+  onSubmit(userData: { name: string; email: string }): void {
+    this.userService.createUser(userData).subscribe({
+      next: (createdUser) => {
+        console.log('Utilisateur créé:', createdUser);
+      },
+      error: (err) => console.error('Erreur création:', err)
+    });
+  }
+}
+\`\`\`
+
+### PUT - Mettre à jour
+
+\`\`\`typescript
+// user.service.ts
+updateUser(id: number, user: Partial<User>): Observable<User> {
+  return this.http.put<User>(\`\${this.apiUrl}/\${id}\`, user);
+}
+\`\`\`
+
+### DELETE - Supprimer
+
+\`\`\`typescript
+// user.service.ts
+deleteUser(id: number): Observable<void> {
+  return this.http.delete<void>(\`\${this.apiUrl}/\${id}\`);
+}
+\`\`\`
+
+---
+
+## 🔗 Query Parameters & Headers
+
+### Ajouter des query params
+
+\`\`\`typescript
+import { HttpParams } from '@angular/common/http';
+
+// Méthode 1: HttpParams
+getUsers(page: number = 0, size: number = 10): Observable<User[]> {
+  const params = new HttpParams()
+    .set('page', page.toString())
+    .set('size', size.toString());
+
+  return this.http.get<User[]>(this.apiUrl, { params });
+}
+// GET /api/users?page=0&size=10
+
+// Méthode 2: Object
+searchUsers(query: string): Observable<User[]> {
+  return this.http.get<User[]>(this.apiUrl, {
+    params: { search: query, active: 'true' }
+  });
+}
+// GET /api/users?search=john&active=true
+\`\`\`
+
+### Ajouter des headers
+
+\`\`\`typescript
+import { HttpHeaders } from '@angular/common/http';
+
+createUser(user: User): Observable<User> {
+  const headers = new HttpHeaders()
+    .set('Content-Type', 'application/json')
+    .set('X-Custom-Header', 'value');
+
+  return this.http.post<User>(this.apiUrl, user, { headers });
+}
+\`\`\`
+
+---
+
+## 🛡️ Intercepteurs HTTP
+
+Les **intercepteurs** permettent d'intercepter toutes les requêtes/réponses HTTP.
+
+### Ajouter un token d'authentification
+
+\`\`\`typescript
+// auth.interceptor.ts
+import { HttpInterceptorFn } from '@angular/common/http';
+
+export const authInterceptor: HttpInterceptorFn = (req, next) => {
+  const token = localStorage.getItem('token');
+
+  if (token) {
+    const cloned = req.clone({
+      headers: req.headers.set('Authorization', \`Bearer \${token}\`)
+    });
+    return next(cloned);
+  }
+
+  return next(req);
+};
+\`\`\`
+
+\`\`\`typescript
+// app.config.ts
+import { provideHttpClient, withInterceptors } from '@angular/common/http';
+import { authInterceptor } from './interceptors/auth.interceptor';
+
+export const appConfig: ApplicationConfig = {
+  providers: [
+    provideHttpClient(
+      withInterceptors([authInterceptor])
+    )
+  ]
+};
+\`\`\`
+
+### Logging Interceptor
+
+\`\`\`typescript
+// logging.interceptor.ts
+import { HttpInterceptorFn } from '@angular/common/http';
+import { tap } from 'rxjs/operators';
+
+export const loggingInterceptor: HttpInterceptorFn = (req, next) => {
+  const started = Date.now();
+  console.log(\`Request: \${req.method} \${req.url}\`);
+
+  return next(req).pipe(
+    tap({
+      next: (response) => {
+        const elapsed = Date.now() - started;
+        console.log(\`Response: \${req.url} - \${elapsed}ms\`);
+      },
+      error: (error) => {
+        console.error(\`Error: \${req.url}\`, error);
+      }
+    })
+  );
+};
+\`\`\`
+
+### Gestion d'erreurs globale
+
+\`\`\`typescript
+// error.interceptor.ts
+import { HttpInterceptorFn, HttpErrorResponse } from '@angular/common/http';
+import { catchError, throwError } from 'rxjs';
+import { inject } from '@angular/core';
+import { Router } from '@angular/router';
+
+export const errorInterceptor: HttpInterceptorFn = (req, next) => {
+  const router = inject(Router);
+
+  return next(req).pipe(
+    catchError((error: HttpErrorResponse) => {
+      let errorMessage = '';
+
+      if (error.error instanceof ErrorEvent) {
+        // Erreur côté client
+        errorMessage = \`Erreur: \${error.error.message}\`;
+      } else {
+        // Erreur côté serveur
+        errorMessage = \`Code: \${error.status}, Message: \${error.message}\`;
+
+        // Redirection selon le code d'erreur
+        if (error.status === 401) {
+          router.navigate(['/login']);
+        } else if (error.status === 403) {
+          router.navigate(['/forbidden']);
+        }
+      }
+
+      console.error(errorMessage);
+      return throwError(() => new Error(errorMessage));
+    })
+  );
+};
+\`\`\`
+
+---
+
+## 🎯 Opérateurs RxJS utiles
+
+### map - Transformer les données
+
+\`\`\`typescript
+import { map } from 'rxjs/operators';
+
+getUsers(): Observable<User[]> {
+  return this.http.get<any[]>(this.apiUrl).pipe(
+    map(users => users.map(u => ({
+      id: u.id,
+      name: \`\${u.firstName} \${u.lastName}\`,
+      email: u.email
+    })))
+  );
+}
+\`\`\`
+
+### catchError - Gérer les erreurs
+
+\`\`\`typescript
+import { catchError, of } from 'rxjs';
+
+getUsers(): Observable<User[]> {
+  return this.http.get<User[]>(this.apiUrl).pipe(
+    catchError(error => {
+      console.error('Erreur:', error);
+      return of([]);  // Retourner tableau vide en cas d'erreur
+    })
+  );
+}
+\`\`\`
+
+### retry - Réessayer en cas d'échec
+
+\`\`\`typescript
+import { retry } from 'rxjs/operators';
+
+getUsers(): Observable<User[]> {
+  return this.http.get<User[]>(this.apiUrl).pipe(
+    retry(3),  // Réessayer 3 fois en cas d'erreur
+    catchError(error => of([]))
+  );
+}
+\`\`\`
+
+### debounceTime - Limiter les requêtes
+
+\`\`\`typescript
+import { debounceTime, distinctUntilChanged, switchMap } from 'rxjs/operators';
+
+// search.component.ts
+@Component({
+  selector: 'app-search'
+})
+export class SearchComponent implements OnInit {
+  searchControl = new FormControl('');
+
+  ngOnInit(): void {
+    this.searchControl.valueChanges.pipe(
+      debounceTime(300),  // Attendre 300ms
+      distinctUntilChanged(),  // Ignorer si valeur identique
+      switchMap(query => this.userService.searchUsers(query || ''))
+    ).subscribe(users => {
+      console.log('Résultats:', users);
+    });
+  }
+}
+\`\`\`
+
+---
+
+## 📦 Service API complet
+
+### Structure recommandée
+
+\`\`\`typescript
+// api.service.ts
+import { Injectable } from '@angular/core';
+import { HttpClient, HttpParams, HttpErrorResponse } from '@angular/common/http';
+import { Observable, throwError } from 'rxjs';
+import { catchError, retry } from 'rxjs/operators';
+import { environment } from '@env/environment';
+
+export interface Page<T> {
+  content: T[];
+  totalElements: number;
+  totalPages: number;
+  number: number;
+  size: number;
+}
+
+@Injectable({
+  providedIn: 'root'
+})
+export class ApiService<T> {
+  constructor(
+    protected http: HttpClient,
+    protected endpoint: string
+  ) {}
+
+  getAll(page: number = 0, size: number = 10): Observable<Page<T>> {
+    const params = new HttpParams()
+      .set('page', page.toString())
+      .set('size', size.toString());
+
+    return this.http.get<Page<T>>(\`\${environment.apiUrl}/\${this.endpoint}\`, { params })
+      .pipe(
+        retry(2),
+        catchError(this.handleError)
+      );
+  }
+
+  getById(id: number): Observable<T> {
+    return this.http.get<T>(\`\${environment.apiUrl}/\${this.endpoint}/\${id}\`)
+      .pipe(catchError(this.handleError));
+  }
+
+  create(item: Omit<T, 'id'>): Observable<T> {
+    return this.http.post<T>(\`\${environment.apiUrl}/\${this.endpoint}\`, item)
+      .pipe(catchError(this.handleError));
+  }
+
+  update(id: number, item: Partial<T>): Observable<T> {
+    return this.http.put<T>(\`\${environment.apiUrl}/\${this.endpoint}/\${id}\`, item)
+      .pipe(catchError(this.handleError));
+  }
+
+  delete(id: number): Observable<void> {
+    return this.http.delete<void>(\`\${environment.apiUrl}/\${this.endpoint}/\${id}\`)
+      .pipe(catchError(this.handleError));
+  }
+
+  private handleError(error: HttpErrorResponse): Observable<never> {
+    let errorMessage = 'Une erreur est survenue';
+
+    if (error.error instanceof ErrorEvent) {
+      errorMessage = \`Erreur: \${error.error.message}\`;
+    } else {
+      errorMessage = \`Code: \${error.status}, Message: \${error.message}\`;
+    }
+
+    console.error(errorMessage);
+    return throwError(() => new Error(errorMessage));
+  }
+}
+\`\`\`
+
+\`\`\`typescript
+// user.service.ts - Hérite du service générique
+@Injectable({
+  providedIn: 'root'
+})
+export class UserService extends ApiService<User> {
+  constructor(http: HttpClient) {
+    super(http, 'users');
+  }
+
+  // Méthodes spécifiques aux utilisateurs
+  searchByName(name: string): Observable<User[]> {
+    return this.http.get<User[]>(\`\${environment.apiUrl}/users/search\`, {
+      params: { name }
+    });
+  }
+}
+\`\`\`
+
+---
+
+## 📋 Bonnes Pratiques
+
+### 1. Utiliser environment pour les URLs
+
+\`\`\`typescript
+// environment.ts
+export const environment = {
+  production: false,
+  apiUrl: 'http://localhost:8080/api'
+};
+
+// ✅ Bon
+private apiUrl = environment.apiUrl;
+
+// ❌ Éviter
+private apiUrl = 'http://localhost:8080/api';
+\`\`\`
+
+### 2. Typer les réponses
+
+\`\`\`typescript
+// ✅ Bon : Typage strict
+getUsers(): Observable<User[]> {
+  return this.http.get<User[]>(this.apiUrl);
+}
+
+// ❌ Éviter : Type any
+getUsers(): Observable<any> {
+  return this.http.get(this.apiUrl);
+}
+\`\`\`
+
+### 3. Centraliser la gestion d'erreurs
+
+\`\`\`typescript
+// ✅ Bon : Utiliser un intercepteur
+export const errorInterceptor: HttpInterceptorFn = (req, next) => {
+  return next(req).pipe(catchError(handleError));
+};
+
+// ❌ Éviter : Répéter dans chaque service
+getUsers().pipe(catchError(err => {...}))
+\`\`\`
+
+### 4. Désabonner les observables
+
+\`\`\`typescript
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+
+export class MyComponent {
+  private destroyRef = inject(DestroyRef);
+
+  ngOnInit(): void {
+    this.userService.getUsers()
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe(users => {
+        // Traitement
+      });
+  }
+}
+\`\`\`
+
+---
+
+## 📋 Checklist HTTP
+
+- [ ] provideHttpClient() dans app.config.ts
+- [ ] Typage des réponses avec interfaces
+- [ ] Gestion d'erreurs avec catchError
+- [ ] Intercepteurs pour token et erreurs
+- [ ] Utiliser environment pour URLs
+- [ ] retry() pour requêtes critiques
+- [ ] debounceTime pour recherches
+- [ ] Désabonner avec takeUntilDestroyed
+- [ ] Tests unitaires avec HttpClientTestingModule
+`
+      },
+      {
+        id: 'frontend-directives-pipes',
+        title: 'Directives & Pipes',
+        category: GuideCategory.FRONTEND,
+        icon: 'extension',
+        color: '#3b82f6',
+        order: 6,
+        tags: ['Directives', 'Pipes', 'Custom', 'Structural'],
+        lastUpdated: new Date(),
+        content: `# Directives & Pipes Angular
+
+## 📌 Qu'est-ce qu'une Directive ?
+
+Une **directive** modifie le comportement ou l'apparence d'un élément du DOM. Angular propose trois types :
+
+### 1. Directives Structurelles
+Modifient la structure du DOM (*ngIf, *ngFor, *ngSwitch)
+
+### 2. Directives d'Attribut
+Modifient l'apparence ou le comportement (ngClass, ngStyle)
+
+### 3. Directives Personnalisées
+Créées par vous pour vos besoins spécifiques
+
+---
+
+## 🔧 Directives Structurelles
+
+### *ngIf - Affichage conditionnel
+
+\`\`\`html
+<!-- Afficher si condition vraie -->
+<div *ngIf="isLoggedIn">
+  Bienvenue !
+</div>
+
+<!-- Avec else -->
+<div *ngIf="isLoggedIn; else loginBlock">
+  Bienvenue !
+</div>
+<ng-template #loginBlock>
+  <button>Se connecter</button>
+</ng-template>
+
+<!-- Avec then et else -->
+<div *ngIf="user; then userBlock else loadingBlock"></div>
+<ng-template #userBlock>
+  <p>{{ user.name }}</p>
+</ng-template>
+<ng-template #loadingBlock>
+  <p>Chargement...</p>
+</ng-template>
+
+<!-- Avec as pour stocker le résultat -->
+<div *ngIf="users$ | async as users">
+  <p>{{ users.length }} utilisateurs</p>
+</div>
+\`\`\`
+
+### *ngFor - Boucles
+
+\`\`\`html
+<!-- Basique -->
+<div *ngFor="let user of users">
+  {{ user.name }}
+</div>
+
+<!-- Avec index -->
+<div *ngFor="let user of users; let i = index">
+  {{ i + 1 }}. {{ user.name }}
+</div>
+
+<!-- Variables disponibles -->
+<div *ngFor="let user of users;
+             let i = index;
+             let first = first;
+             let last = last;
+             let even = even;
+             let odd = odd">
+  <p [class.highlight]="even">{{ i }} - {{ user.name }}</p>
+</div>
+
+<!-- Avec trackBy pour performance -->
+<div *ngFor="let user of users; trackBy: trackByUserId">
+  {{ user.name }}
+</div>
+\`\`\`
+
+\`\`\`typescript
+// Composant
+trackByUserId(index: number, user: User): number {
+  return user.id;  // Utiliser l'ID pour tracker les éléments
+}
+\`\`\`
+
+### *ngSwitch - Cas multiples
+
+\`\`\`html
+<div [ngSwitch]="userRole">
+  <div *ngSwitchCase="'admin'">
+    <h2>Panneau Admin</h2>
+  </div>
+  <div *ngSwitchCase="'user'">
+    <h2>Panneau Utilisateur</h2>
+  </div>
+  <div *ngSwitchCase="'guest'">
+    <h2>Panneau Invité</h2>
+  </div>
+  <div *ngSwitchDefault>
+    <h2>Rôle inconnu</h2>
+  </div>
+</div>
+\`\`\`
+
+---
+
+## 🎨 Directives d'Attribut
+
+### ngClass - Classes dynamiques
+
+\`\`\`html
+<!-- String -->
+<div [ngClass]="'active'">Texte</div>
+
+<!-- Array -->
+<div [ngClass]="['active', 'highlight']">Texte</div>
+
+<!-- Object (le plus courant) -->
+<div [ngClass]="{
+  'active': isActive,
+  'disabled': isDisabled,
+  'error': hasError
+}">
+  Texte
+</div>
+
+<!-- Expression -->
+<div [ngClass]="isActive ? 'active' : 'inactive'">Texte</div>
+\`\`\`
+
+### ngStyle - Styles dynamiques
+
+\`\`\`html
+<!-- Object -->
+<div [ngStyle]="{
+  'color': textColor,
+  'font-size': fontSize + 'px',
+  'background-color': bgColor
+}">
+  Texte stylé
+</div>
+
+<!-- Expression -->
+<div [ngStyle]="isActive ? activeStyles : inactiveStyles">
+  Texte
+</div>
+\`\`\`
+
+\`\`\`typescript
+// Composant
+activeStyles = {
+  'color': 'green',
+  'font-weight': 'bold'
+};
+
+inactiveStyles = {
+  'color': 'gray',
+  'font-weight': 'normal'
+};
+\`\`\`
+
+### ngModel - Binding bidirectionnel
+
+\`\`\`html
+<input [(ngModel)]="username" placeholder="Nom d'utilisateur">
+<p>Bonjour {{ username }}</p>
+\`\`\`
+
+---
+
+## ⚙️ Créer une Directive Personnalisée
+
+### Directive d'Attribut - Highlight
+
+\`\`\`typescript
+// highlight.directive.ts
+import { Directive, ElementRef, HostListener, Input } from '@angular/core';
+
+@Directive({
+  selector: '[appHighlight]',
+  standalone: true
+})
+export class HighlightDirective {
+  @Input() appHighlight = 'yellow';  // Couleur par défaut
+  @Input() defaultColor = 'transparent';
+
+  constructor(private el: ElementRef) {}
+
+  @HostListener('mouseenter') onMouseEnter() {
+    this.highlight(this.appHighlight);
+  }
+
+  @HostListener('mouseleave') onMouseLeave() {
+    this.highlight(this.defaultColor);
+  }
+
+  private highlight(color: string) {
+    this.el.nativeElement.style.backgroundColor = color;
+  }
+}
+\`\`\`
+
+\`\`\`html
+<!-- Utilisation -->
+<p appHighlight>Survolez-moi (jaune par défaut)</p>
+<p [appHighlight]="'lightblue'">Survolez-moi (bleu)</p>
+<p appHighlight="pink" defaultColor="lightgray">Survolez-moi (rose)</p>
+\`\`\`
+
+### Directive Structurelle - Unless
+
+\`\`\`typescript
+// unless.directive.ts
+import { Directive, Input, TemplateRef, ViewContainerRef } from '@angular/core';
+
+@Directive({
+  selector: '[appUnless]',
+  standalone: true
+})
+export class UnlessDirective {
+  private hasView = false;
+
+  constructor(
+    private templateRef: TemplateRef<any>,
+    private viewContainer: ViewContainerRef
+  ) {}
+
+  @Input() set appUnless(condition: boolean) {
+    if (!condition && !this.hasView) {
+      // Afficher si condition est fausse
+      this.viewContainer.createEmbeddedView(this.templateRef);
+      this.hasView = true;
+    } else if (condition && this.hasView) {
+      // Cacher si condition est vraie
+      this.viewContainer.clear();
+      this.hasView = false;
+    }
+  }
+}
+\`\`\`
+
+\`\`\`html
+<!-- Utilisation (inverse de *ngIf) -->
+<p *appUnless="isLoggedIn">
+  Veuillez vous connecter
+</p>
+\`\`\`
+
+---
+
+## 🔧 Pipes Intégrés
+
+Les **pipes** transforment les données dans les templates.
+
+### Pipes de texte
+
+\`\`\`html
+<!-- uppercase -->
+<p>{{ 'hello' | uppercase }}</p>  <!-- HELLO -->
+
+<!-- lowercase -->
+<p>{{ 'HELLO' | lowercase }}</p>  <!-- hello -->
+
+<!-- titlecase -->
+<p>{{ 'hello world' | titlecase }}</p>  <!-- Hello World -->
+
+<!-- slice -->
+<p>{{ 'Hello World' | slice:0:5 }}</p>  <!-- Hello -->
+\`\`\`
+
+### Pipes de nombres
+
+\`\`\`html
+<!-- number (décimales) -->
+<p>{{ 123456.789 | number }}</p>  <!-- 123,456.789 -->
+<p>{{ 123456.789 | number:'1.0-2' }}</p>  <!-- 123,456.79 -->
+<!-- Format: minEntiers.minDécimales-maxDécimales -->
+
+<!-- percent -->
+<p>{{ 0.25 | percent }}</p>  <!-- 25% -->
+<p>{{ 0.25678 | percent:'1.2-2' }}</p>  <!-- 25.68% -->
+
+<!-- currency -->
+<p>{{ 1234.56 | currency }}</p>  <!-- $1,234.56 -->
+<p>{{ 1234.56 | currency:'EUR' }}</p>  <!-- €1,234.56 -->
+<p>{{ 1234.56 | currency:'EUR':'symbol':'1.0-0' }}</p>  <!-- €1,235 -->
+\`\`\`
+
+### Pipes de dates
+
+\`\`\`html
+<!-- date -->
+<p>{{ today | date }}</p>  <!-- Sep 15, 2024 -->
+<p>{{ today | date:'short' }}</p>  <!-- 9/15/24, 10:30 AM -->
+<p>{{ today | date:'medium' }}</p>  <!-- Sep 15, 2024, 10:30:00 AM -->
+<p>{{ today | date:'long' }}</p>  <!-- September 15, 2024 at 10:30:00 AM -->
+<p>{{ today | date:'full' }}</p>  <!-- Sunday, September 15, 2024 at 10:30:00 AM -->
+
+<!-- Format personnalisé -->
+<p>{{ today | date:'dd/MM/yyyy' }}</p>  <!-- 15/09/2024 -->
+<p>{{ today | date:'HH:mm:ss' }}</p>  <!-- 10:30:45 -->
+<p>{{ today | date:'EEEE, d MMMM y' }}</p>  <!-- Dimanche, 15 septembre 2024 -->
+\`\`\`
+
+### Autres pipes utiles
+
+\`\`\`html
+<!-- json (debug) -->
+<pre>{{ user | json }}</pre>
+
+<!-- async (Observables) -->
+<p>{{ users$ | async }}</p>
+
+<!-- keyvalue (objets) -->
+<div *ngFor="let item of object | keyvalue">
+  {{ item.key }}: {{ item.value }}
+</div>
+\`\`\`
+
+---
+
+## 🎯 Créer un Pipe Personnalisé
+
+### Exemple 1: Pipe de filtrage
+
+\`\`\`typescript
+// filter.pipe.ts
+import { Pipe, PipeTransform } from '@angular/core';
+
+@Pipe({
+  name: 'filter',
+  standalone: true
+})
+export class FilterPipe implements PipeTransform {
+  transform(items: any[], searchText: string, property: string): any[] {
+    if (!items || !searchText || !property) {
+      return items;
+    }
+
+    searchText = searchText.toLowerCase();
+
+    return items.filter(item => {
+      return item[property].toLowerCase().includes(searchText);
+    });
+  }
+}
+\`\`\`
+
+\`\`\`html
+<!-- Utilisation -->
+<input [(ngModel)]="searchText" placeholder="Rechercher">
+
+<div *ngFor="let user of users | filter:searchText:'name'">
+  {{ user.name }}
+</div>
+\`\`\`
+
+### Exemple 2: Pipe de temps relatif
+
+\`\`\`typescript
+// time-ago.pipe.ts
+import { Pipe, PipeTransform } from '@angular/core';
+
+@Pipe({
+  name: 'timeAgo',
+  standalone: true
+})
+export class TimeAgoPipe implements PipeTransform {
+  transform(value: Date | string): string {
+    const date = new Date(value);
+    const now = new Date();
+    const seconds = Math.floor((now.getTime() - date.getTime()) / 1000);
+
+    if (seconds < 60) return 'à l\\'instant';
+    if (seconds < 3600) return \`il y a \${Math.floor(seconds / 60)} min\`;
+    if (seconds < 86400) return \`il y a \${Math.floor(seconds / 3600)} h\`;
+    if (seconds < 604800) return \`il y a \${Math.floor(seconds / 86400)} j\`;
+
+    return date.toLocaleDateString('fr-FR');
+  }
+}
+\`\`\`
+
+\`\`\`html
+<!-- Utilisation -->
+<p>Publié {{ post.createdAt | timeAgo }}</p>
+<!-- Publié il y a 2 h -->
+\`\`\`
+
+### Exemple 3: Pipe Pure vs Impure
+
+\`\`\`typescript
+// ✅ Pipe Pure (par défaut) - Plus performant
+@Pipe({
+  name: 'filter',
+  standalone: true,
+  pure: true  // Par défaut
+})
+export class FilterPipe implements PipeTransform {
+  transform(items: any[], search: string): any[] {
+    // Exécuté uniquement si items ou search change
+    return items.filter(item => item.includes(search));
+  }
+}
+
+// ⚠️ Pipe Impure - Moins performant mais réactif
+@Pipe({
+  name: 'filter',
+  standalone: true,
+  pure: false  // Exécuté à chaque détection de changement
+})
+export class FilterPipe implements PipeTransform {
+  transform(items: any[], search: string): any[] {
+    console.log('Pipe exécuté');
+    return items.filter(item => item.includes(search));
+  }
+}
+\`\`\`
+
+---
+
+## 🎭 Combiner Directives et Pipes
+
+\`\`\`html
+<!-- Filtrer et limiter les résultats -->
+<div *ngFor="let user of users | filter:searchText:'name' | slice:0:10">
+  {{ user.name | titlecase }}
+</div>
+
+<!-- Avec plusieurs conditions -->
+<div *ngIf="(users$ | async) as users">
+  <p [ngClass]="{'empty': users.length === 0}">
+    {{ users.length }} utilisateur(s)
+  </p>
+
+  <div *ngFor="let user of users"
+       [appHighlight]="user.isActive ? 'lightgreen' : 'lightgray'">
+    {{ user.name }} - Inscrit {{ user.createdAt | timeAgo }}
+  </div>
+</div>
+\`\`\`
+
+---
+
+## 📋 Bonnes Pratiques
+
+### 1. Préférer les pipes purs
+
+\`\`\`typescript
+// ✅ Bon : Pure pipe (performant)
+@Pipe({ name: 'filter', pure: true })
+
+// ❌ Éviter : Impure pipe (lent)
+@Pipe({ name: 'filter', pure: false })
+\`\`\`
+
+### 2. Ne pas modifier les données dans les pipes
+
+\`\`\`typescript
+// ❌ Mauvais : Modifie le tableau original
+transform(items: any[]): any[] {
+  items.sort();  // Mutation !
+  return items;
+}
+
+// ✅ Bon : Retourne une copie
+transform(items: any[]): any[] {
+  return [...items].sort();
+}
+\`\`\`
+
+### 3. Utiliser trackBy avec *ngFor
+
+\`\`\`html
+<!-- ✅ Bon : Avec trackBy -->
+<div *ngFor="let user of users; trackBy: trackByUserId">
+
+<!-- ❌ Éviter : Sans trackBy (recréé tout le DOM) -->
+<div *ngFor="let user of users">
+\`\`\`
+
+### 4. Pipes vs Méthodes dans le template
+
+\`\`\`html
+<!-- ✅ Bon : Utiliser un pipe -->
+<p>{{ value | myPipe }}</p>
+
+<!-- ❌ Éviter : Méthode (exécutée à chaque détection) -->
+<p>{{ transformValue(value) }}</p>
+\`\`\`
+
+---
+
+## 📋 Checklist Directives & Pipes
+
+- [ ] Utiliser *ngIf avec trackBy pour *ngFor
+- [ ] Préférer ngClass/ngStyle aux [class] multiples
+- [ ] Créer des directives réutilisables
+- [ ] Pipes purs par défaut (pure: true)
+- [ ] Ne pas muter les données dans les pipes
+- [ ] Tester les directives personnalisées
+- [ ] Documenter les pipes complexes
+`
+      },
+      {
+        id: 'frontend-state',
+        title: 'State Management',
+        category: GuideCategory.FRONTEND,
+        icon: 'storage',
+        color: '#3b82f6',
+        order: 7,
+        tags: ['State', 'RxJS', 'BehaviorSubject', 'Signals'],
+        lastUpdated: new Date(),
+        content: `# State Management Angular
+
+## 📌 Qu'est-ce que le State Management ?
+
+Le **State Management** (gestion d'état) consiste à centraliser et gérer les données partagées dans votre application Angular.
+
+### Pourquoi gérer l'état ?
+
+- **Partage de données** entre composants non liés
+- **Synchronisation** des données dans toute l'application
+- **Prédictibilité** de l'état de l'app
+- **Debugging** facilité
+
+---
+
+## 🔧 Approche 1: Services avec BehaviorSubject
+
+La méthode la plus simple pour gérer l'état dans Angular.
+
+### Service d'état basique
+
+\`\`\`typescript
+// user-state.service.ts
+import { Injectable } from '@angular/core';
+import { BehaviorSubject, Observable } from 'rxjs';
+
+export interface User {
+  id: number;
+  name: string;
+  email: string;
+}
+
+@Injectable({
+  providedIn: 'root'
+})
+export class UserStateService {
+  // État privé
+  private userSubject = new BehaviorSubject<User | null>(null);
+  private loadingSubject = new BehaviorSubject<boolean>(false);
+
+  // Exposer comme Observables (read-only)
+  public user$: Observable<User | null> = this.userSubject.asObservable();
+  public loading$: Observable<boolean> = this.loadingSubject.asObservable();
+
+  // Getters pour la valeur actuelle
+  get currentUser(): User | null {
+    return this.userSubject.value;
+  }
+
+  // Actions pour modifier l'état
+  setUser(user: User | null): void {
+    this.userSubject.next(user);
+  }
+
+  setLoading(loading: boolean): void {
+    this.loadingSubject.next(loading);
+  }
+
+  clearUser(): void {
+    this.userSubject.next(null);
+  }
+}
+\`\`\`
+
+### Utilisation dans les composants
+
+\`\`\`typescript
+// user-profile.component.ts
+import { Component, OnInit } from '@angular/core';
+import { UserStateService } from './services/user-state.service';
+
+@Component({
+  selector: 'app-user-profile',
+  template: \`
+    <div *ngIf="userState.user$ | async as user">
+      <h2>{{ user.name }}</h2>
+      <p>{{ user.email }}</p>
+    </div>
+    <p *ngIf="userState.loading$ | async">Chargement...</p>
+  \`
+})
+export class UserProfileComponent {
+  constructor(public userState: UserStateService) {}
+}
+\`\`\`
+
+\`\`\`typescript
+// login.component.ts
+@Component({
+  selector: 'app-login'
+})
+export class LoginComponent {
+  constructor(
+    private userState: UserStateService,
+    private authService: AuthService
+  ) {}
+
+  login(credentials: {email: string; password: string}): void {
+    this.userState.setLoading(true);
+
+    this.authService.login(credentials).subscribe({
+      next: (user) => {
+        this.userState.setUser(user);
+        this.userState.setLoading(false);
+      },
+      error: (err) => {
+        this.userState.setLoading(false);
+        console.error('Erreur login:', err);
+      }
+    });
+  }
+}
+\`\`\`
+
+---
+
+## 🎯 Approche 2: Store Pattern
+
+Un pattern plus structuré pour applications moyennes à grandes.
+
+### Créer un Store centralisé
+
+\`\`\`typescript
+// store/app.state.ts
+export interface AppState {
+  user: UserState;
+  products: ProductState;
+  cart: CartState;
+}
+
+export interface UserState {
+  currentUser: User | null;
+  isAuthenticated: boolean;
+  loading: boolean;
+}
+
+export interface ProductState {
+  items: Product[];
+  selectedProduct: Product | null;
+  loading: boolean;
+}
+
+export interface CartState {
+  items: CartItem[];
+  total: number;
+}
+\`\`\`
+
+\`\`\`typescript
+// store/store.service.ts
+import { Injectable } from '@angular/core';
+import { BehaviorSubject, Observable } from 'rxjs';
+import { map } from 'rxjs/operators';
+
+@Injectable({
+  providedIn: 'root'
+})
+export class StoreService {
+  // État initial
+  private initialState: AppState = {
+    user: {
+      currentUser: null,
+      isAuthenticated: false,
+      loading: false
+    },
+    products: {
+      items: [],
+      selectedProduct: null,
+      loading: false
+    },
+    cart: {
+      items: [],
+      total: 0
+    }
+  };
+
+  // BehaviorSubject privé
+  private state$ = new BehaviorSubject<AppState>(this.initialState);
+
+  // Sélecteurs (selectors) pour accéder à des parties spécifiques de l'état
+  selectUser(): Observable<UserState> {
+    return this.state$.pipe(map(state => state.user));
+  }
+
+  selectCurrentUser(): Observable<User | null> {
+    return this.state$.pipe(map(state => state.user.currentUser));
+  }
+
+  selectProducts(): Observable<Product[]> {
+    return this.state$.pipe(map(state => state.products.items));
+  }
+
+  selectCart(): Observable<CartState> {
+    return this.state$.pipe(map(state => state.cart));
+  }
+
+  // Actions pour modifier l'état
+  setUser(user: User | null): void {
+    this.updateState({
+      user: {
+        ...this.state$.value.user,
+        currentUser: user,
+        isAuthenticated: !!user
+      }
+    });
+  }
+
+  setProducts(products: Product[]): void {
+    this.updateState({
+      products: {
+        ...this.state$.value.products,
+        items: products
+      }
+    });
+  }
+
+  addToCart(product: Product): void {
+    const currentCart = this.state$.value.cart;
+    const newItems = [...currentCart.items, { product, quantity: 1 }];
+    const newTotal = newItems.reduce((sum, item) =>
+      sum + (item.product.price * item.quantity), 0
+    );
+
+    this.updateState({
+      cart: {
+        items: newItems,
+        total: newTotal
+      }
+    });
+  }
+
+  clearCart(): void {
+    this.updateState({
+      cart: {
+        items: [],
+        total: 0
+      }
+    });
+  }
+
+  // Méthode privée pour mettre à jour l'état
+  private updateState(partialState: Partial<AppState>): void {
+    this.state$.next({
+      ...this.state$.value,
+      ...partialState
+    });
+  }
+
+  // Getter pour l'état complet (debug)
+  getState(): AppState {
+    return this.state$.value;
+  }
+}
+\`\`\`
+
+### Utilisation du Store
+
+\`\`\`typescript
+// product-list.component.ts
+@Component({
+  selector: 'app-product-list',
+  template: \`
+    <div *ngFor="let product of products$ | async">
+      <h3>{{ product.name }}</h3>
+      <p>{{ product.price | currency }}</p>
+      <button (click)="addToCart(product)">Ajouter au panier</button>
+    </div>
+  \`
+})
+export class ProductListComponent implements OnInit {
+  products$ = this.store.selectProducts();
+
+  constructor(
+    private store: StoreService,
+    private productService: ProductService
+  ) {}
+
+  ngOnInit(): void {
+    this.productService.getProducts().subscribe(products => {
+      this.store.setProducts(products);
+    });
+  }
+
+  addToCart(product: Product): void {
+    this.store.addToCart(product);
+  }
+}
+\`\`\`
+
+\`\`\`typescript
+// cart.component.ts
+@Component({
+  selector: 'app-cart',
+  template: \`
+    <div *ngIf="cart$ | async as cart">
+      <h2>Panier ({{ cart.items.length }})</h2>
+      <div *ngFor="let item of cart.items">
+        {{ item.product.name }} x {{ item.quantity }}
+      </div>
+      <p>Total: {{ cart.total | currency }}</p>
+      <button (click)="clearCart()">Vider le panier</button>
+    </div>
+  \`
+})
+export class CartComponent {
+  cart$ = this.store.selectCart();
+
+  constructor(private store: StoreService) {}
+
+  clearCart(): void {
+    this.store.clearCart();
+  }
+}
+\`\`\`
+
+---
+
+## ⚡ Approche 3: Angular Signals (Angular 16+)
+
+Les **Signals** sont une nouvelle approche réactive pour gérer l'état.
+
+### Service avec Signals
+
+\`\`\`typescript
+// user-signal.service.ts
+import { Injectable, signal, computed } from '@angular/core';
+
+@Injectable({
+  providedIn: 'root'
+})
+export class UserSignalService {
+  // Signal writable
+  private userSignal = signal<User | null>(null);
+  private loadingSignal = signal<boolean>(false);
+
+  // Signaux read-only exposés
+  user = this.userSignal.asReadonly();
+  loading = this.loadingSignal.asReadonly();
+
+  // Computed signal (dérivé)
+  isAuthenticated = computed(() => this.userSignal() !== null);
+  userName = computed(() => this.userSignal()?.name ?? 'Guest');
+
+  // Actions
+  setUser(user: User | null): void {
+    this.userSignal.set(user);
+  }
+
+  updateUser(updates: Partial<User>): void {
+    const current = this.userSignal();
+    if (current) {
+      this.userSignal.set({ ...current, ...updates });
+    }
+  }
+
+  setLoading(loading: boolean): void {
+    this.loadingSignal.set(loading);
+  }
+
+  clearUser(): void {
+    this.userSignal.set(null);
+  }
+}
+\`\`\`
+
+### Utilisation dans les composants
+
+\`\`\`typescript
+// user-profile.component.ts
+import { Component } from '@angular/core';
+import { UserSignalService } from './services/user-signal.service';
+
+@Component({
+  selector: 'app-user-profile',
+  template: \`
+    <div *ngIf="userService.user() as user">
+      <h2>{{ user.name }}</h2>
+      <p>{{ user.email }}</p>
+    </div>
+
+    <p *ngIf="userService.loading()">Chargement...</p>
+
+    <!-- Computed signal -->
+    <p>Statut: {{ userService.isAuthenticated() ? 'Connecté' : 'Déconnecté' }}</p>
+    <p>Bonjour {{ userService.userName() }}</p>
+  \`
+})
+export class UserProfileComponent {
+  constructor(public userService: UserSignalService) {}
+}
+\`\`\`
+
+---
+
+## 🎨 Pattern Facade
+
+Combiner plusieurs services dans une façade pour simplifier l'usage.
+
+\`\`\`typescript
+// user.facade.ts
+import { Injectable } from '@angular/core';
+import { UserStateService } from './user-state.service';
+import { UserApiService } from './user-api.service';
+import { Observable } from 'rxjs';
+import { tap } from 'rxjs/operators';
+
+@Injectable({
+  providedIn: 'root'
+})
+export class UserFacade {
+  // Exposer les observables du state
+  user$ = this.userState.user$;
+  loading$ = this.userState.loading$;
+
+  constructor(
+    private userState: UserStateService,
+    private userApi: UserApiService
+  ) {}
+
+  // Actions de haut niveau
+  loadUser(id: number): void {
+    this.userState.setLoading(true);
+    this.userApi.getUserById(id).pipe(
+      tap(user => {
+        this.userState.setUser(user);
+        this.userState.setLoading(false);
+      })
+    ).subscribe();
+  }
+
+  updateUser(id: number, updates: Partial<User>): void {
+    this.userApi.updateUser(id, updates).pipe(
+      tap(updatedUser => this.userState.setUser(updatedUser))
+    ).subscribe();
+  }
+
+  logout(): void {
+    this.userState.clearUser();
+    // Autres actions de logout...
+  }
+}
+\`\`\`
+
+\`\`\`typescript
+// Utilisation simplifiée
+@Component({
+  selector: 'app-user-profile'
+})
+export class UserProfileComponent implements OnInit {
+  user$ = this.userFacade.user$;
+
+  constructor(private userFacade: UserFacade) {}
+
+  ngOnInit(): void {
+    this.userFacade.loadUser(123);
+  }
+
+  updateEmail(email: string): void {
+    this.userFacade.updateUser(123, { email });
+  }
+}
+\`\`\`
+
+---
+
+## 📋 Bonnes Pratiques
+
+### 1. État immutable
+
+\`\`\`typescript
+// ✅ Bon : Créer un nouvel objet
+setUser(user: User): void {
+  this.state = { ...this.state, user };
+}
+
+// ❌ Éviter : Muter l'état
+setUser(user: User): void {
+  this.state.user = user;  // Mutation !
+}
+\`\`\`
+
+### 2. Sélecteurs (Selectors)
+
+\`\`\`typescript
+// ✅ Bon : Utiliser des sélecteurs
+selectUserName(): Observable<string> {
+  return this.state$.pipe(
+    map(state => state.user?.name ?? '')
+  );
+}
+
+// ❌ Éviter : Accès direct dans le composant
+this.state$.subscribe(state => {
+  this.userName = state.user?.name;
+});
+\`\`\`
+
+### 3. Unsubscribe automatique
+
+\`\`\`typescript
+// ✅ Bon : Avec async pipe
+<div *ngIf="user$ | async as user">
+
+// ✅ Bon : Avec takeUntilDestroyed
+this.user$.pipe(
+  takeUntilDestroyed(this.destroyRef)
+).subscribe();
+
+// ❌ Éviter : Subscription manuelle
+this.user$.subscribe(user => {
+  // Fuite mémoire !
+});
+\`\`\`
+
+### 4. État local vs global
+
+\`\`\`typescript
+// ✅ État global : Données partagées (user, auth, cart)
+@Injectable({ providedIn: 'root' })
+export class GlobalStateService {}
+
+// ✅ État local : Données du composant uniquement
+@Component({})
+export class MyComponent {
+  private localState = {
+    isOpen: false,
+    selectedTab: 0
+  };
+}
+\`\`\`
+
+---
+
+## 📋 Checklist State Management
+
+- [ ] Utiliser BehaviorSubject pour état simple
+- [ ] Créer un Store centralisé pour apps complexes
+- [ ] Exposer des Observables read-only
+- [ ] Utiliser des sélecteurs pour dériver l'état
+- [ ] État immutable (pas de mutations)
+- [ ] Désabonner avec async pipe ou takeUntilDestroyed
+- [ ] Séparer état local et global
+- [ ] Tester la logique du state
+- [ ] Considérer NgRx/Akita pour très grandes apps
 `
       },
 
