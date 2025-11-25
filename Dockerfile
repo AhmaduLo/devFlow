@@ -15,8 +15,8 @@ RUN npm run build
 # Étape 2 : Serveur Nginx
 FROM nginx:alpine
 
-# Copier le build Angular dans Nginx
-COPY --from=build /app/dist/DevFlow /usr/share/nginx/html
+# Copier le build Angular dans Nginx (depuis le dossier browser)
+COPY --from=build /app/dist/DevFlow/browser /usr/share/nginx/html
 
 # Exposer le port 80
 EXPOSE 80

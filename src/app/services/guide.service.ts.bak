@@ -1582,7 +1582,7 @@ import java.util.stream.Collectors;
  */
 @RestController
 @RequestMapping("/api/rentals")
-@CrossOrigin(origins = "\${app.cors.allowed-origins}")
+@CrossOrigin(origins = "${app.cors.allowed-origins}")
 @Tag(name = "Rentals", description = "API de gestion des locations")
 @SecurityRequirement(name = "bearerAuth")
 public class RentalController {
@@ -7780,7 +7780,7 @@ export class MyComponent {
         order: 5,
         tags: ['JWT', 'Spring Security', 'Authentication', 'Authorization'],
         lastUpdated: new Date(),
-        content: `# JWT & Spring Security
+        content: \`# JWT & Spring Security
 
 ## 📌 Définition
 
@@ -7798,7 +7798,7 @@ export class MyComponent {
 
 ### 1. Dépendances Maven (pom.xml)
 
-~~~xml
+\\\`\\\`\\\`xml
 <dependencies>
     <!-- Spring Security -->
     <dependency>
@@ -7824,184 +7824,326 @@ export class MyComponent {
         <version>0.12.5</version>
         <scope>runtime</scope>
     </dependency>
+
+    <!-- BCrypt pour hasher les mots de passe -->
+    <dependency>
+        <groupId>org.springframework.security</groupId>
+        <artifactId>spring-security-crypto</artifactId>
+    </dependency>
 </dependencies>
-~~~
+\\\`\\\`\\\`
 
 ### 2. Configuration application.properties
 
-~~~properties
+\\\`\\\`\\\`properties
 # JWT Configuration
-jwt.secret=votre_cle_secrete_tres_longue_au_moins_256_bits_pour_HS256
+jwt.secret=VotreCleSecrete123456789VotreCleSecrete123456789VotreCleSecrete
 jwt.expiration=86400000
 # 86400000 ms = 24 heures
-~~~
 
-⚠️ **Important** : En production, ne jamais mettre la clé secrète en dur. Utilisez des variables d'environnement.
+# CORS Configuration
+app.cors.allowed-origins=http://localhost:4200
+\\\`\\\`\\\`
 
----
+### 3. Classe de Configuration Spring Security
 
-## 🔐 SecurityConfig - Configuration complète
+\\\`\\\`\\\`java
+package com.chatop.backend.security;
 
-~~~java
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.config.annotation.authentication.configuration.AuthenticationConfiguration;
+import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
+import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
+import org.springframework.security.config.http.SessionCreationPolicy;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+
+/**
+ * Configuration centrale de Spring Security pour ChâTop
+ */
 @Configuration
 @EnableWebSecurity
 @EnableMethodSecurity
-@RequiredArgsConstructor
 public class SecurityConfig {
 
     private final JwtAuthenticationFilter jwtAuthFilter;
-    private final UserDetailsService userDetailsService;
+    private final JwtAuthenticationEntryPoint jwtAuthenticationEntryPoint;
 
+    public SecurityConfig(
+        JwtAuthenticationFilter jwtAuthFilter,
+        JwtAuthenticationEntryPoint jwtAuthenticationEntryPoint
+    ) {
+        this.jwtAuthFilter = jwtAuthFilter;
+        this.jwtAuthenticationEntryPoint = jwtAuthenticationEntryPoint;
+    }
+
+    /**
+     * Configuration principale de sécurité
+     */
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
-            .csrf(AbstractHttpConfigurer::disable)
-            .cors(cors -> cors.configurationSource(corsConfigurationSource()))
+            // Désactive CSRF (pas nécessaire pour les APIs stateless)
+            .csrf(csrf -> csrf.disable())
+
+            // Configure les règles d'autorisation
             .authorizeHttpRequests(auth -> auth
-                .requestMatchers("/api/auth/**", "/swagger-ui/**").permitAll()
+                // Endpoints publics (pas besoin d'authentification)
+                .requestMatchers("/api/auth/register", "/api/auth/login").permitAll()
+                .requestMatchers("/swagger-ui/**", "/v3/api-docs/**").permitAll()
+                .requestMatchers("/uploads/**").permitAll()
+
+                // Tous les autres endpoints nécessitent une authentification
                 .anyRequest().authenticated()
             )
+
+            // Gestion des erreurs d'authentification
+            .exceptionHandling(ex -> ex
+                .authenticationEntryPoint(jwtAuthenticationEntryPoint)
+            )
+
+            // Session stateless (pas de session HTTP, on utilise JWT)
             .sessionManagement(session -> session
                 .sessionCreationPolicy(SessionCreationPolicy.STATELESS)
             )
-            .authenticationProvider(authenticationProvider())
+
+            // Ajoute notre filtre JWT AVANT le filtre d'authentification par défaut
             .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);
 
         return http.build();
     }
 
-    @Bean
-    public CorsConfigurationSource corsConfigurationSource() {
-        CorsConfiguration configuration = new CorsConfiguration();
-        configuration.setAllowedOrigins(Arrays.asList("http://localhost:4200"));
-        configuration.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE"));
-        configuration.setAllowedHeaders(Arrays.asList("*"));
-        configuration.setAllowCredentials(true);
-
-        UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
-        source.registerCorsConfiguration("/**", configuration);
-        return source;
-    }
-
-    @Bean
-    public AuthenticationProvider authenticationProvider() {
-        DaoAuthenticationProvider authProvider = new DaoAuthenticationProvider();
-        authProvider.setUserDetailsService(userDetailsService);
-        authProvider.setPasswordEncoder(passwordEncoder());
-        return authProvider;
-    }
-
+    /**
+     * Bean pour encoder les mots de passe avec BCrypt
+     */
     @Bean
     public PasswordEncoder passwordEncoder() {
         return new BCryptPasswordEncoder();
     }
+
+    /**
+     * Bean pour gérer l'authentification
+     */
+    @Bean
+    public AuthenticationManager authenticationManager(
+        AuthenticationConfiguration config
+    ) throws Exception {
+        return config.getAuthenticationManager();
+    }
 }
-~~~
+\\\`\\\`\\\`
 
 ---
 
-## 🎫 JwtUtil - Génération et validation de tokens
+## 🔑 Génération et Validation des JWT
 
-~~~java
+### JwtUtil - Classe utilitaire pour les tokens
+
+\\\`\\\`\\\`java
+package com.chatop.backend.security;
+
+import io.jsonwebtoken.Claims;
+import io.jsonwebtoken.Jwts;
+import io.jsonwebtoken.SignatureAlgorithm;
+import io.jsonwebtoken.security.Keys;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.security.core.userdetails.UserDetails;
+import org.springframework.stereotype.Component;
+
+import java.security.Key;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.function.Function;
+
+/**
+ * Utilitaire pour générer et valider les tokens JWT
+ */
 @Component
 public class JwtUtil {
 
     @Value("\${jwt.secret}")
-    private String secret;
+    private String SECRET_KEY;
 
     @Value("\${jwt.expiration}")
-    private Long expiration;
+    private Long JWT_EXPIRATION;
 
+    /**
+     * Extrait l'email (username) du token
+     */
     public String extractUsername(String token) {
         return extractClaim(token, Claims::getSubject);
     }
 
+    /**
+     * Extrait la date d'expiration du token
+     */
     public Date extractExpiration(String token) {
         return extractClaim(token, Claims::getExpiration);
     }
 
+    /**
+     * Extrait un claim spécifique du token
+     */
     public <T> T extractClaim(String token, Function<Claims, T> claimsResolver) {
         final Claims claims = extractAllClaims(token);
         return claimsResolver.apply(claims);
     }
 
+    /**
+     * Extrait tous les claims du token
+     */
     private Claims extractAllClaims(String token) {
-        return Jwts
-            .parserBuilder()
-            .setSigningKey(getSigningKey())
-            .build()
-            .parseClaimsJws(token)
-            .getBody();
+        return Jwts.parserBuilder()
+                .setSigningKey(getSigningKey())
+                .build()
+                .parseClaimsJws(token)
+                .getBody();
     }
 
+    /**
+     * Vérifie si le token est expiré
+     */
     private Boolean isTokenExpired(String token) {
         return extractExpiration(token).before(new Date());
     }
 
+    /**
+     * Génère un token JWT pour un utilisateur
+     */
     public String generateToken(UserDetails userDetails) {
         Map<String, Object> claims = new HashMap<>();
         return createToken(claims, userDetails.getUsername());
     }
 
-    private String createToken(Map<String, Object> claims, String subject) {
-        return Jwts.builder()
-            .setClaims(claims)
-            .setSubject(subject)
-            .setIssuedAt(new Date(System.currentTimeMillis()))
-            .setExpiration(new Date(System.currentTimeMillis() + expiration))
-            .signWith(getSigningKey(), SignatureAlgorithm.HS256)
-            .compact();
+    /**
+     * Génère un token avec des claims personnalisés
+     */
+    public String generateToken(String username, Long userId) {
+        Map<String, Object> claims = new HashMap<>();
+        claims.put("userId", userId);
+        return createToken(claims, username);
     }
 
+    /**
+     * Crée le token JWT
+     */
+    private String createToken(Map<String, Object> claims, String subject) {
+        Date now = new Date();
+        Date expiryDate = new Date(now.getTime() + JWT_EXPIRATION);
+
+        return Jwts.builder()
+                .setClaims(claims)
+                .setSubject(subject)
+                .setIssuedAt(now)
+                .setExpiration(expiryDate)
+                .signWith(getSigningKey(), SignatureAlgorithm.HS256)
+                .compact();
+    }
+
+    /**
+     * Valide le token
+     */
     public Boolean validateToken(String token, UserDetails userDetails) {
         final String username = extractUsername(token);
         return (username.equals(userDetails.getUsername()) && !isTokenExpired(token));
     }
 
+    /**
+     * Récupère la clé de signature
+     */
     private Key getSigningKey() {
-        byte[] keyBytes = secret.getBytes();
+        byte[] keyBytes = SECRET_KEY.getBytes();
         return Keys.hmacShaKeyFor(keyBytes);
     }
+
+    /**
+     * Extrait l'userId du token
+     */
+    public Long extractUserId(String token) {
+        Claims claims = extractAllClaims(token);
+        return claims.get("userId", Long.class);
+    }
 }
-~~~
+\\\`\\\`\\\`
 
 ---
 
-## 🔍 JwtAuthenticationFilter - Filtre d'authentification
+## 🛡️ Filtre d'Authentification JWT
 
-~~~java
+### JwtAuthenticationFilter
+
+\\\`\\\`\\\`java
+package com.chatop.backend.security;
+
+import jakarta.servlet.FilterChain;
+import jakarta.servlet.ServletException;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.core.userdetails.UserDetails;
+import org.springframework.security.core.userdetails.UserDetailsService;
+import org.springframework.security.web.authentication.WebAuthenticationDetailsSource;
+import org.springframework.stereotype.Component;
+import org.springframework.web.filter.OncePerRequestFilter;
+
+import java.io.IOException;
+
+/**
+ * Filtre qui intercepte chaque requête pour vérifier le token JWT
+ */
 @Component
-@RequiredArgsConstructor
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     private final JwtUtil jwtUtil;
     private final UserDetailsService userDetailsService;
 
+    public JwtAuthenticationFilter(JwtUtil jwtUtil, UserDetailsService userDetailsService) {
+        this.jwtUtil = jwtUtil;
+        this.userDetailsService = userDetailsService;
+    }
+
     @Override
     protected void doFilterInternal(
-            @NonNull HttpServletRequest request,
-            @NonNull HttpServletResponse response,
-            @NonNull FilterChain filterChain
+        HttpServletRequest request,
+        HttpServletResponse response,
+        FilterChain filterChain
     ) throws ServletException, IOException {
 
+        // 1. Extraire le token du header Authorization
         final String authHeader = request.getHeader("Authorization");
         final String jwt;
         final String userEmail;
 
+        // Vérifier si le header contient un Bearer token
         if (authHeader == null || !authHeader.startsWith("Bearer ")) {
             filterChain.doFilter(request, response);
             return;
         }
 
+        // Extraire le token (après "Bearer ")
         jwt = authHeader.substring(7);
 
         try {
+            // 2. Extraire l'email du token
             userEmail = jwtUtil.extractUsername(jwt);
 
+            // 3. Si l'email existe et que l'utilisateur n'est pas déjà authentifié
             if (userEmail != null && SecurityContextHolder.getContext().getAuthentication() == null) {
-                UserDetails userDetails = this.userDetailsService.loadUserByUsername(userEmail);
 
+                // 4. Charger les détails de l'utilisateur depuis la BDD
+                UserDetails userDetails = userDetailsService.loadUserByUsername(userEmail);
+
+                // 5. Valider le token
                 if (jwtUtil.validateToken(jwt, userDetails)) {
+
+                    // 6. Créer l'objet d'authentification
                     UsernamePasswordAuthenticationToken authToken =
                         new UsernamePasswordAuthenticationToken(
                             userDetails,
@@ -8013,312 +8155,433 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                         new WebAuthenticationDetailsSource().buildDetails(request)
                     );
 
+                    // 7. Mettre l'utilisateur dans le contexte de sécurité
                     SecurityContextHolder.getContext().setAuthentication(authToken);
                 }
             }
         } catch (Exception e) {
+            // Log l'erreur mais ne bloque pas la requête
             logger.error("Cannot set user authentication: {}", e);
         }
 
+        // 8. Passer au filtre suivant
         filterChain.doFilter(request, response);
     }
 }
-~~~
+\\\`\\\`\\\`
 
 ---
 
-## 👤 CustomUserDetailsService
+## 👤 UserDetailsService Personnalisé
 
-~~~java
+\\\`\\\`\\\`java
+package com.chatop.backend.security;
+
+import com.chatop.backend.entity.User;
+import com.chatop.backend.repository.UserRepository;
+import org.springframework.security.core.userdetails.UserDetails;
+import org.springframework.security.core.userdetails.UserDetailsService;
+import org.springframework.security.core.userdetails.UsernameNotFoundException;
+import org.springframework.stereotype.Service;
+
+import java.util.ArrayList;
+
+/**
+ * Service pour charger les détails de l'utilisateur depuis la BDD
+ */
 @Service
-@RequiredArgsConstructor
 public class CustomUserDetailsService implements UserDetailsService {
 
     private final UserRepository userRepository;
 
+    public CustomUserDetailsService(UserRepository userRepository) {
+        this.userRepository = userRepository;
+    }
+
     @Override
     public UserDetails loadUserByUsername(String email) throws UsernameNotFoundException {
+        // Chercher l'utilisateur dans la BDD par email
         User user = userRepository.findByEmail(email)
-            .orElseThrow(() -> new UsernameNotFoundException("User not found: " + email));
+            .orElseThrow(() ->
+                new UsernameNotFoundException("Utilisateur introuvable avec l'email: " + email)
+            );
 
+        // Retourner un objet UserDetails
         return new org.springframework.security.core.userdetails.User(
             user.getEmail(),
             user.getPassword(),
-            new ArrayList<>()
+            new ArrayList<>() // Pas de rôles pour ChâTop (tous les users ont les mêmes droits)
         );
     }
 }
-~~~
+\\\`\\\`\\\`
 
 ---
 
-## 🎮 AuthController - Login & Register
+## 🔐 Controller d'Authentification
 
-~~~java
+### AuthController - Login & Register
+
+\\\`\\\`\\\`java
+package com.chatop.backend.controller;
+
+import com.chatop.backend.dto.LoginRequest;
+import com.chatop.backend.dto.RegisterRequest;
+import com.chatop.backend.dto.AuthResponse;
+import com.chatop.backend.entity.User;
+import com.chatop.backend.repository.UserRepository;
+import com.chatop.backend.security.JwtUtil;
+import jakarta.validation.Valid;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.web.bind.annotation.*;
+
+/**
+ * Controller pour l'authentification (login/register)
+ */
 @RestController
 @RequestMapping("/api/auth")
-@RequiredArgsConstructor
+@CrossOrigin(origins = "\${app.cors.allowed-origins}")
 public class AuthController {
 
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
     private final JwtUtil jwtUtil;
     private final AuthenticationManager authenticationManager;
-    private final UserDetailsService userDetailsService;
 
-    @PostMapping("/register")
-    public ResponseEntity<?> register(@Valid @RequestBody RegisterRequest request) {
-        if (userRepository.existsByEmail(request.getEmail())) {
-            return ResponseEntity.badRequest().body("Email already in use!");
-        }
-
-        User user = User.builder()
-            .email(request.getEmail())
-            .name(request.getName())
-            .password(passwordEncoder.encode(request.getPassword()))
-            .createdAt(LocalDateTime.now())
-            .updatedAt(LocalDateTime.now())
-            .build();
-
-        userRepository.save(user);
-
-        UserDetails userDetails = userDetailsService.loadUserByUsername(user.getEmail());
-        String token = jwtUtil.generateToken(userDetails);
-
-        return ResponseEntity.ok(new AuthResponse(token));
+    public AuthController(
+        UserRepository userRepository,
+        PasswordEncoder passwordEncoder,
+        JwtUtil jwtUtil,
+        AuthenticationManager authenticationManager
+    ) {
+        this.userRepository = userRepository;
+        this.passwordEncoder = passwordEncoder;
+        this.jwtUtil = jwtUtil;
+        this.authenticationManager = authenticationManager;
     }
 
+    /**
+     * POST /api/auth/register
+     * Inscription d'un nouvel utilisateur
+     */
+    @PostMapping("/register")
+    public ResponseEntity<?> register(@RequestBody @Valid RegisterRequest request) {
+
+        // 1. Vérifier si l'email existe déjà
+        if (userRepository.existsByEmail(request.getEmail())) {
+            return ResponseEntity
+                .status(HttpStatus.BAD_REQUEST)
+                .body(Map.of("error", "Cet email est déjà utilisé"));
+        }
+
+        // 2. Créer le nouvel utilisateur
+        User user = new User();
+        user.setEmail(request.getEmail());
+        user.setName(request.getName());
+        user.setPassword(passwordEncoder.encode(request.getPassword())); // Hash du mot de passe
+
+        // 3. Sauvegarder en BDD
+        User savedUser = userRepository.save(user);
+
+        // 4. Générer le JWT token
+        String token = jwtUtil.generateToken(savedUser.getEmail(), savedUser.getId());
+
+        // 5. Retourner la réponse avec le token
+        AuthResponse response = new AuthResponse(token);
+        return ResponseEntity.status(HttpStatus.CREATED).body(response);
+    }
+
+    /**
+     * POST /api/auth/login
+     * Connexion d'un utilisateur existant
+     */
     @PostMapping("/login")
-    public ResponseEntity<?> login(@Valid @RequestBody LoginRequest request) {
+    public ResponseEntity<?> login(@RequestBody @Valid LoginRequest request) {
+
         try {
-            authenticationManager.authenticate(
+            // 1. Authentifier l'utilisateur (vérifie email + mot de passe)
+            Authentication authentication = authenticationManager.authenticate(
                 new UsernamePasswordAuthenticationToken(
                     request.getEmail(),
                     request.getPassword()
                 )
             );
 
-            UserDetails userDetails = userDetailsService.loadUserByUsername(request.getEmail());
-            String token = jwtUtil.generateToken(userDetails);
+            // 2. Récupérer l'utilisateur depuis la BDD
+            User user = userRepository.findByEmail(request.getEmail())
+                .orElseThrow(() -> new RuntimeException("Utilisateur introuvable"));
 
-            return ResponseEntity.ok(new AuthResponse(token));
+            // 3. Générer le JWT token
+            String token = jwtUtil.generateToken(user.getEmail(), user.getId());
+
+            // 4. Retourner la réponse avec le token
+            AuthResponse response = new AuthResponse(token);
+            return ResponseEntity.ok(response);
+
         } catch (Exception e) {
-            return ResponseEntity.badRequest().body("Invalid email or password!");
+            return ResponseEntity
+                .status(HttpStatus.UNAUTHORIZED)
+                .body(Map.of("error", "Email ou mot de passe incorrect"));
         }
     }
 
+    /**
+     * GET /api/auth/me
+     * Récupère les informations de l'utilisateur connecté
+     */
     @GetMapping("/me")
-    public ResponseEntity<User> getCurrentUser(@RequestHeader("Authorization") String authHeader) {
-        String token = authHeader.substring(7);
-        String email = jwtUtil.extractUsername(token);
-
+    public ResponseEntity<?> getCurrentUser(Principal principal) {
+        String email = principal.getName();
         User user = userRepository.findByEmail(email)
-            .orElseThrow(() -> new RuntimeException("User not found"));
+            .orElseThrow(() -> new RuntimeException("Utilisateur introuvable"));
 
-        return ResponseEntity.ok(user);
+        UserResponse response = new UserResponse(
+            user.getId(),
+            user.getEmail(),
+            user.getName(),
+            user.getCreatedAt()
+        );
+
+        return ResponseEntity.ok(response);
     }
 }
-~~~
+\\\`\\\`\\\`
 
 ---
 
-## 📦 DTOs pour l'authentification
+## 📦 DTOs pour l'Authentification
 
-**LoginRequest.java**
-~~~java
+\\\`\\\`\\\`java
+// LoginRequest.java
+package com.chatop.backend.dto;
+
+import jakarta.validation.constraints.Email;
+import jakarta.validation.constraints.NotBlank;
+import lombok.Data;
+
 @Data
 public class LoginRequest {
-    @NotBlank(message = "Email is required")
-    @Email(message = "Email must be valid")
+    @NotBlank(message = "L'email est obligatoire")
+    @Email(message = "Format d'email invalide")
     private String email;
 
-    @NotBlank(message = "Password is required")
+    @NotBlank(message = "Le mot de passe est obligatoire")
     private String password;
 }
-~~~
 
-**RegisterRequest.java**
-~~~java
+// RegisterRequest.java
+package com.chatop.backend.dto;
+
+import jakarta.validation.constraints.Email;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
+import lombok.Data;
+
 @Data
 public class RegisterRequest {
-    @NotBlank(message = "Name is required")
-    @Size(min = 2, max = 50)
-    private String name;
-
-    @NotBlank @Email
+    @NotBlank(message = "L'email est obligatoire")
+    @Email(message = "Format d'email invalide")
     private String email;
 
-    @NotBlank
-    @Size(min = 8, message = "Password must be at least 8 characters")
+    @NotBlank(message = "Le nom est obligatoire")
+    @Size(min = 2, max = 50, message = "Le nom doit contenir entre 2 et 50 caractères")
+    private String name;
+
+    @NotBlank(message = "Le mot de passe est obligatoire")
+    @Size(min = 8, message = "Le mot de passe doit contenir au moins 8 caractères")
     private String password;
 }
-~~~
 
-**AuthResponse.java**
-~~~java
+// AuthResponse.java
+package com.chatop.backend.dto;
+
+import lombok.AllArgsConstructor;
+import lombok.Data;
+
 @Data
 @AllArgsConstructor
 public class AuthResponse {
     private String token;
 }
-~~~
+\\\`\\\`\\\`
 
 ---
 
-## 🧪 Tests avec Postman
+## 🧪 Tester l'API avec Postman/Thunder Client
 
-### Register
-~~~
-POST http://localhost:3001/api/auth/register
+### 1. Inscription (Register)
+
+\\\`\\\`\\\`http
+POST http://localhost:8080/api/auth/register
 Content-Type: application/json
 
 {
+  "email": "john.doe@example.com",
   "name": "John Doe",
-  "email": "john@example.com",
   "password": "password123"
 }
-~~~
 
-### Login
-~~~
-POST http://localhost:3001/api/auth/login
+// Réponse :
+{
+  "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+}
+\\\`\\\`\\\`
+
+### 2. Connexion (Login)
+
+\\\`\\\`\\\`http
+POST http://localhost:8080/api/auth/login
 Content-Type: application/json
 
 {
-  "email": "john@example.com",
+  "email": "john.doe@example.com",
   "password": "password123"
 }
-~~~
 
-### Route protégée
-~~~
-GET http://localhost:3001/api/rentals
-Authorization: Bearer <votre-token-ici>
-~~~
+// Réponse :
+{
+  "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+}
+\\\`\\\`\\\`
+
+### 3. Accéder à une ressource protégée
+
+\\\`\\\`\\\`http
+GET http://localhost:8080/api/rentals
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+
+// Réponse : Liste des locations
+\\\`\\\`\\\`
 
 ---
 
-## 🎨 Intégration Frontend Angular
+## ⚙️ Utilisation du JWT côté Frontend (Angular)
 
-### Service d'authentification
+### 1. Intercepteur HTTP pour ajouter le token
 
-~~~typescript
+\\\`\\\`\\\`typescript
+// auth.interceptor.ts
+import { HttpInterceptorFn } from '@angular/common/http';
+
+export const authInterceptor: HttpInterceptorFn = (req, next) => {
+  const token = localStorage.getItem('token');
+
+  if (token) {
+    const cloned = req.clone({
+      headers: req.headers.set('Authorization', \`Bearer \${token}\`)
+    });
+    return next(cloned);
+  }
+
+  return next(req);
+};
+\\\`\\\`\\\`
+
+### 2. Service d'Authentification
+
+\\\`\\\`\\\`typescript
+// auth.service.ts
+import { Injectable } from '@angular/core';
+import { HttpClient } from '@angular/common/http';
+import { Observable, tap } from 'rxjs';
+
 @Injectable({ providedIn: 'root' })
 export class AuthService {
-  private apiUrl = 'http://localhost:3001/api/auth';
-  private tokenSubject = new BehaviorSubject<string | null>(this.getToken());
+  private apiUrl = 'http://localhost:8080/api/auth';
 
   constructor(private http: HttpClient) {}
 
-  register(data: RegisterRequest): Observable<AuthResponse> {
-    return this.http.post<AuthResponse>(\`\${this.apiUrl}/register\`, data)
-      .pipe(tap(response => this.setToken(response.token)));
+  register(email: string, name: string, password: string): Observable<any> {
+    return this.http.post(\`\${this.apiUrl}/register\`, { email, name, password })
+      .pipe(tap((response: any) => {
+        localStorage.setItem('token', response.token);
+      }));
   }
 
-  login(data: LoginRequest): Observable<AuthResponse> {
-    return this.http.post<AuthResponse>(\`\${this.apiUrl}/login\`, data)
-      .pipe(tap(response => this.setToken(response.token)));
+  login(email: string, password: string): Observable<any> {
+    return this.http.post(\`\${this.apiUrl}/login\`, { email, password })
+      .pipe(tap((response: any) => {
+        localStorage.setItem('token', response.token);
+      }));
   }
 
   logout(): void {
     localStorage.removeItem('token');
-    this.tokenSubject.next(null);
   }
 
-  private setToken(token: string): void {
-    localStorage.setItem('token', token);
-    this.tokenSubject.next(token);
+  isAuthenticated(): boolean {
+    return !!localStorage.getItem('token');
   }
 
   getToken(): string | null {
     return localStorage.getItem('token');
   }
-
-  isAuthenticated(): boolean {
-    return this.getToken() !== null;
-  }
 }
-~~~
-
-### HTTP Interceptor
-
-~~~typescript
-@Injectable()
-export class AuthInterceptor implements HttpInterceptor {
-  constructor(private authService: AuthService) {}
-
-  intercept(req: HttpRequest<any>, next: HttpHandler): Observable<HttpEvent<any>> {
-    const token = this.authService.getToken();
-
-    if (token) {
-      req = req.clone({
-        setHeaders: { Authorization: \`Bearer \${token}\` }
-      });
-    }
-
-    return next.handle(req);
-  }
-}
-~~~
-
-### Auth Guard
-
-~~~typescript
-@Injectable({ providedIn: 'root' })
-export class AuthGuard implements CanActivate {
-  constructor(private authService: AuthService, private router: Router) {}
-
-  canActivate(): boolean {
-    if (this.authService.isAuthenticated()) {
-      return true;
-    }
-    this.router.navigate(['/login']);
-    return false;
-  }
-}
-~~~
+\\\`\\\`\\\`
 
 ---
 
-## ✅ Checklist Sécurité JWT
+## 📋 Checklist Sécurité JWT
 
-- [ ] Clé secrète en variable d'environnement (jamais en dur)
-- [ ] Clé secrète d'au moins 256 bits pour HS256
-- [ ] Expiration du token configurée (24h max recommandé)
-- [ ] HTTPS en production (jamais HTTP)
-- [ ] Token stocké en localStorage
-- [ ] Validation du token côté backend à chaque requête
+- [ ] Clé secrète longue et complexe (au moins 256 bits)
+- [ ] Clé stockée dans les variables d'environnement (pas dans le code)
+- [ ] Token avec date d'expiration (24h recommandé)
 - [ ] Mot de passe hashé avec BCrypt
-- [ ] CORS configuré pour autoriser uniquement le frontend
-- [ ] Déconnexion côté frontend (suppression du token)
+- [ ] Validation des DTOs avec @Valid
+- [ ] HTTPS en production (pas de JWT en HTTP)
+- [ ] CORS configuré correctement
+- [ ] Refresh token pour renouveler l'accès
+- [ ] Blacklist des tokens révoqués
+- [ ] Rate limiting sur les endpoints d'auth
+
+## ⚠️ Erreurs Courantes
+
+### 1. Clé secrète trop courte
+\\\`\\\`\\\`java
+// ❌ Mauvais : Clé trop courte
+jwt.secret=secret123
+
+// ✅ Bon : Clé de 256 bits minimum
+jwt.secret=VotreCleSecrete123456789VotreCleSecrete123456789VotreCleSecrete
+\\\`\\\`\\\`
+
+### 2. Ne pas hasher le mot de passe
+\\\`\\\`\\\`java
+// ❌ Mauvais : Mot de passe en clair
+user.setPassword(request.getPassword());
+
+// ✅ Bon : Mot de passe hashé
+user.setPassword(passwordEncoder.encode(request.getPassword()));
+\\\`\\\`\\\`
+
+### 3. Oublier d'ajouter le filtre JWT
+\\\`\\\`\\\`java
+// ❌ Mauvais : Le filtre n'est pas ajouté
+@Bean
+public SecurityFilterChain securityFilterChain(HttpSecurity http) {
+    return http.build();
+}
+
+// ✅ Bon : Filtre ajouté AVANT UsernamePasswordAuthenticationFilter
+@Bean
+public SecurityFilterChain securityFilterChain(HttpSecurity http) {
+    http.addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class);
+    return http.build();
+}
+\\\`\\\`\\\`
 
 ---
 
-## ⚠️ Erreurs courantes
+## 🎯 Récapitulatif du Flow d'Authentification
 
-**1. Token null ou undefined**
-- Vérifier que le token est bien envoyé avec "Bearer " devant
-- Header correct : \`Authorization: Bearer eyJhbGci...\`
-
-**2. Clé secrète trop courte**
-- Erreur : "The specified key byte array is 128 bits"
-- Solution : Utiliser une clé d'au moins 256 bits (32 caractères)
-
-**3. CORS bloqué**
-- Vérifier la configuration CORS dans SecurityConfig
-- Autoriser l'origine du frontend : \`http://localhost:4200\`
-
-**4. Token expiré**
-- Renouveler le token en se reconnectant
-- Implémenter un refresh token pour renouvellement automatique
-
----
-
-## 🎯 Récapitulatif du Flow
-
-1. **Inscription** : User → Backend hash password → Save BDD → Génère JWT → Retourne token
-2. **Connexion** : User → Backend vérifie credentials → Génère JWT → Retourne token
-3. **Requêtes protégées** : Frontend envoie \`Authorization: Bearer <token>\` → Filter valide → Autorise
+1. **Inscription** : User envoie email/password → Backend hash le password → Sauvegarde en BDD → Génère JWT → Retourne le token
+2. **Connexion** : User envoie email/password → Backend vérifie les credentials → Génère JWT → Retourne le token
+3. **Requêtes protégées** : Frontend envoie \`Authorization: Bearer <token>\` → JwtAuthenticationFilter extrait le token → Valide le token → Charge l'utilisateur → Autorise la requête
 4. **Déconnexion** : Frontend supprime le token du localStorage
 
 ---
@@ -8329,7 +8592,7 @@ export class AuthGuard implements CanActivate {
 - [Spring Security Documentation](https://docs.spring.io/spring-security/reference/index.html)
 - [JJWT Library](https://github.com/jwtk/jjwt)
 - [OWASP JWT Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/JSON_Web_Token_for_Java_Cheat_Sheet.html)
-`
+\`
       },
 
       // TESTS - Section complète
